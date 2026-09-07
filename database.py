@@ -150,5 +150,4 @@ async def clear_request(
             "chat_id": chat_id,
             "user_id": user_id
         }
-    )        }
     )
