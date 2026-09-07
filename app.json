@@ -1,0 +1,39 @@
+{
+  "name": "AUTO-APPROVE",
+  "description": "Telegram Group Join Request Manager Bot",
+  "repository": "https://github.com/tgwalehm-byte/AUTO-APPROVE",
+  "keywords": [
+    "telegram",
+    "bot",
+    "pyrogram",
+    "join-request",
+    "auto-approve"
+  ],
+  "env": {
+    "API_ID": {
+      "description": "Telegram API ID",
+      "required": true
+    },
+    "API_HASH": {
+      "description": "Telegram API Hash",
+      "required": true
+    },
+    "BOT_TOKEN": {
+      "description": "Telegram Bot Token",
+      "required": true
+    },
+    "OWNER_ID": {
+      "description": "Telegram Owner User ID",
+      "required": true
+    },
+    "MONGO_URL": {
+      "description": "MongoDB connection URL",
+      "required": true
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "heroku/python"
+    }
+  ]
+}
