@@ -12,7 +12,10 @@ from database import (
     set_auto_approve,
     get_ad,
     save_ad,
-    delete_ad
+    delete_ad,
+    save_request,
+    get_pending_requests,
+    delete_request
 )
 
 
