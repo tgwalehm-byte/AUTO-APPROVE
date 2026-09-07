@@ -182,46 +182,67 @@ async def join_request(
     chat_id = request.chat.id
     user = request.from_user
 
+    # =====================================================
+    # SAVE REQUEST
+    # =====================================================
+
+    await save_request(
+        chat_id,
+        user.id,
+        request.user_chat_id
+    )
+
     logging.info(
-        f"Join request: {user.id} -> {chat_id}"
+        f"Saved join request: "
+        f"{user.id} -> {chat_id}"
     )
 
 
     # =====================================================
-    # SEND OWNER AD
+    # GET OWNER AD
+    # =====================================================
+
+    ad = await get_ad()
+
+
+    # =====================================================
+    # BOT INTRO + OWNER AD
+    # =====================================================
+
+    welcome = (
+        "👋 Hello!\n\n"
+        "🤖 I am a Join Request Manager Bot.\n\n"
+        "My work is to manage group join requests, "
+        "automatically approve requests and help "
+        "group administrators manage pending requests.\n\n"
+    )
+
+    if ad:
+        welcome += (
+            "📢 Advertisement\n\n"
+            f"{ad}"
+        )
+
+
+    # =====================================================
+    # SEND PRIVATE MESSAGE BEFORE APPROVAL
     # =====================================================
 
     try:
 
-        ad = await get_ad()
+        await client.send_message(
+            request.user_chat_id,
+            welcome
+        )
 
-        if ad:
-
-            try:
-
-                # IMPORTANT:
-                # Telegram provides a temporary
-                # user chat ID for join requests.
-                await client.send_message(
-                    request.user_chat_id,
-                    ad
-                )
-
-                logging.info(
-                    f"Advertisement sent to {user.id}"
-                )
-
-            except Exception as e:
-
-                logging.error(
-                    f"Advertisement DM failed: {e}"
-                )
-
+        logging.info(
+            f"Welcome/Ad sent to {user.id}"
+        )
 
     except Exception as e:
 
         logging.error(
-            f"Advertisement database error: {e}"
+            f"Private message failed: {e}"
         )
 
 
@@ -231,27 +252,23 @@ async def join_request(
 
     try:
 
-        enabled = await get_auto_approve(
-            chat_id
-        )
+        if await get_auto_approve(chat_id):
 
-        if not enabled:
-            return
+            await client.approve_chat_join_request(
+                chat_id,
+                user.id
+            )
 
-        await client.approve_chat_join_request(
-            chat_id,
-            user.id
-        )
+            await delete_request(
+                chat_id,
+                user.id
+            )
 
-        logging.info(
-            f"Auto approved: {user.id}"
-        )
+            logging.info(
+                f"Auto approved: {user.id}"
+            )
 
     except FloodWait as e:
-
-        logging.warning(
-            f"FloodWait: {e.value} seconds"
-        )
 
         await asyncio.sleep(
             e.value
@@ -264,16 +281,21 @@ async def join_request(
                 user.id
             )
 
+            await delete_request(
+                chat_id,
+                user.id
+            )
+
         except Exception as error:
 
             logging.error(
-                f"Approve retry failed: {error}"
+                f"Retry approve failed: {error}"
             )
 
     except Exception as e:
 
         logging.error(
-            f"Auto approve failed: {e}"
+            f"Auto approve error: {e}"
         )
 
 
