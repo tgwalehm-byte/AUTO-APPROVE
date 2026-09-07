@@ -3,6 +3,10 @@ import os
 from motor.motor_asyncio import AsyncIOMotorClient
 
 
+# =========================================================
+# MONGODB
+# =========================================================
+
 MONGO_URL = os.environ["MONGO_URL"]
 
 mongo = AsyncIOMotorClient(MONGO_URL)
@@ -146,4 +150,5 @@ async def clear_request(
             "chat_id": chat_id,
             "user_id": user_id
         }
+    )        }
     )
