@@ -1,26 +1,19 @@
-# 🤖 Telegram Join Request Manager Bot
+# 🤖 AUTO APPROVE BOT
 
-A Telegram bot for managing group join requests.
+Telegram Group Join Request Manager Bot.
+
+[![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/tgwalehm-byte/AUTO-APPROVE)
 
 ## ✨ Features
 
-- `/approve` — Auto Approve ON/OFF
-- `/addmember 10` — Approve 10 pending requests
-- `/addmember 100` — Approve 100 pending requests
-- `/addmember 1k` — Approve 1,000 pending requests
-- `/addmember 10k` — Approve 10,000 pending requests
-- `/stop` — Stop running approval process
-- `/remove` — Remove pending requests belonging to deleted accounts
-- `/setad Your Ad` — Set advertisement
-- `/delad` — Delete advertisement
-- MongoDB settings storage
-- Heroku worker support
-
-## 🔑 Required Environment Variables
-
-```text
-API_ID
-API_HASH
-BOT_TOKEN
-OWNER_ID
-MONGO_URL
+- 🟢 `/approve` — Auto Approve ON/OFF
+- 👥 `/addmember 10` — Approve 10 requests
+- 👥 `/addmember 100` — Approve 100 requests
+- 👥 `/addmember 1k` — Approve 1,000 requests
+- 👥 `/addmember 10k` — Approve 10,000 requests
+- 🛑 `/stop` — Stop approval
+- 🧹 `/remove` — Remove deleted-account requests
+- 📢 `/setad` — Set advertisement
+- 🗑 `/delad` — Delete advertisement
+- 💾 MongoDB support
+- 🚀 Heroku support
