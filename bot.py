@@ -182,50 +182,87 @@ async def join_request(
     chat_id = request.chat.id
     user = request.from_user
 
+    if not user:
+        logging.error("Join request user not found.")
+        return
+
+    logging.info(
+        f"📥 NEW JOIN REQUEST | "
+        f"User: {user.id} | "
+        f"Chat: {chat_id} | "
+        f"UserChatID: {request.user_chat_id}"
+    )
+
+
     # =====================================================
     # SAVE REQUEST
     # =====================================================
 
-    await save_request(
-        chat_id,
-        user.id,
-        request.user_chat_id
-    )
+    try:
 
-    logging.info(
-        f"Saved join request: "
-        f"{user.id} -> {chat_id}"
-    )
+        await save_request(
+            chat_id,
+            user.id,
+            request.user_chat_id
+        )
 
+        logging.info(
+            f"💾 REQUEST SAVED | {user.id}"
+        )
 
-    # =====================================================
-    # GET OWNER AD
-    # =====================================================
+    except Exception as e:
 
-    ad = await get_ad()
-
-
-    # =====================================================
-    # BOT INTRO + OWNER AD
-    # =====================================================
-
-    welcome = (
-        "👋 Hello!\n\n"
-        "🤖 I am a Join Request Manager Bot.\n\n"
-        "My work is to manage group join requests, "
-        "automatically approve requests and help "
-        "group administrators manage pending requests.\n\n"
-    )
-
-    if ad:
-        welcome += (
-            "📢 Advertisement\n\n"
-            f"{ad}"
+        logging.exception(
+            f"❌ SAVE REQUEST FAILED: {e}"
         )
 
 
     # =====================================================
-    # SEND PRIVATE MESSAGE BEFORE APPROVAL
+    # GET AD
+    # =====================================================
+
+    ad = None
+
+    try:
+
+        ad = await get_ad()
+
+    except Exception as e:
+
+        logging.exception(
+            f"❌ GET AD FAILED: {e}"
+        )
+
+
+    # =====================================================
+    # WELCOME MESSAGE
+    # =====================================================
+
+    welcome = (
+        "👋 Hello!\n\n"
+        "🤖 **Join Request Manager Bot**\n\n"
+        "I help group administrators manage "
+        "join requests and automatically approve "
+        "new members when Auto Approve is enabled.\n\n"
+        "✅ Manage Join Requests\n"
+        "⚡ Auto Approval\n"
+        "👥 Bulk Approval Support\n\n"
+    )
+
+    if ad:
+
+        welcome += (
+            "📢 **Advertisement**\n\n"
+            f"{ad}\n\n"
+        )
+
+    welcome += (
+        "✨ Thank you for requesting to join!"
+    )
+
+
+    # =====================================================
+    # SEND PRIVATE MESSAGE
     # =====================================================
 
     try:
@@ -236,13 +273,68 @@ async def join_request(
         )
 
         logging.info(
-            f"Welcome/Ad sent to {user.id}"
+            f"📩 WELCOME/AD SENT | {user.id}"
         )
 
     except Exception as e:
 
-        logging.error(
-            f"Private message failed: {e}"
+        logging.exception(
+            f"❌ PRIVATE MESSAGE FAILED | "
+            f"User: {user.id} | Error: {e}"
+        )
+
+
+    # =====================================================
+    # AUTO APPROVE
+    # =====================================================
+
+    try:
+
+        auto_approve = await get_auto_approve(
+            chat_id
+        )
+
+        if auto_approve:
+
+            logging.info(
+                f"⚡ AUTO APPROVING | {user.id}"
+            )
+
+            try:
+
+                await client.approve_chat_join_request(
+                    chat_id,
+                    user.id
+                )
+
+            except FloodWait as e:
+
+                logging.warning(
+                    f"⏳ FloodWait: {e.value}s"
+                )
+
+                await asyncio.sleep(
+                    e.value
+                )
+
+                await client.approve_chat_join_request(
+                    chat_id,
+                    user.id
+                )
+
+            await delete_request(
+                chat_id,
+                user.id
+            )
+
+            logging.info(
+                f"✅ AUTO APPROVED | {user.id}"
+            )
+
+    except Exception as e:
+
+        logging.exception(
+            f"❌ AUTO APPROVE FAILED: {e}"
         )
 
 
