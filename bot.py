@@ -400,34 +400,37 @@ async def bulk_approve(
     approved = 0
     failed = 0
 
-
     try:
 
-        async for request in client.get_chat_join_requests(
-            chat_id
-        ):
+        requests = await get_pending_requests(
+            chat_id,
+            amount
+        )
 
-            if approved >= amount:
-                break
+        if not requests:
 
+            await message.reply_text(
+                "ℹ️ No saved pending requests found."
+            )
+
+            return
+
+
+        for request in requests:
 
             try:
 
                 await client.approve_chat_join_request(
                     chat_id,
-                    request.user.id
+                    request["user_id"]
                 )
 
                 approved += 1
 
-
-                if approved % 100 == 0:
-
-                    logging.info(
-                        f"{chat_id}: "
-                        f"{approved}/{amount}"
-                    )
-
+                await delete_request(
+                    chat_id,
+                    request["user_id"]
+                )
 
                 await asyncio.sleep(
                     0.08
@@ -435,10 +438,6 @@ async def bulk_approve(
 
 
             except FloodWait as e:
-
-                logging.warning(
-                    f"FloodWait {e.value}s"
-                )
 
                 await asyncio.sleep(
                     e.value
@@ -465,8 +464,7 @@ async def bulk_approve(
 
         await message.reply_text(
             "🛑 **Approval Stopped**\n\n"
-            f"✅ Approved: `{approved:,}`\n"
-            "⏳ Remaining requests were not processed."
+            f"✅ Approved: `{approved:,}`"
         )
 
 
