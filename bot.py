@@ -3,12 +3,9 @@ import asyncio
 import logging
 
 from pyrogram import Client, filters
+from pyrogram.enums import ChatMemberStatus
 from pyrogram.types import ChatJoinRequest
-from pyrogram.errors import (
-    FloodWait,
-    UserIsBlocked,
-    PeerIdInvalid
-)
+from pyrogram.errors import FloodWait
 
 from database import (
     get_auto_approve,
@@ -30,7 +27,7 @@ logging.basicConfig(
 
 
 # =========================================================
-# ENV
+# ENVIRONMENT
 # =========================================================
 
 API_ID = int(os.environ["API_ID"])
@@ -40,7 +37,7 @@ OWNER_ID = int(os.environ["OWNER_ID"])
 
 
 # =========================================================
-# CLIENT
+# BOT
 # =========================================================
 
 app = Client(
@@ -51,7 +48,7 @@ app = Client(
 )
 
 
-# Running bulk operations
+# Running bulk approval tasks
 running_tasks = {}
 
 
@@ -68,15 +65,18 @@ async def is_admin(client, chat_id, user_id):
             user_id
         )
 
-        return member.status in (
-            "administrator",
-            "owner"
-        )
+        if member.status in (
+            ChatMemberStatus.OWNER,
+            ChatMemberStatus.ADMINISTRATOR
+        ):
+            return True
+
+        return False
 
     except Exception as e:
 
         logging.error(
-            f"Admin check error: {e}"
+            f"Admin check failed: {e}"
         )
 
         return False
@@ -88,7 +88,9 @@ async def is_admin(client, chat_id, user_id):
 
 def parse_amount(value):
 
-    value = value.lower().replace(",", "").strip()
+    value = value.lower()
+    value = value.replace(",", "")
+    value = value.strip()
 
     try:
 
@@ -104,7 +106,7 @@ def parse_amount(value):
 
         return int(value)
 
-    except (ValueError, TypeError):
+    except Exception:
 
         return None
 
@@ -117,7 +119,7 @@ def parse_amount(value):
 @app.on_message(
     filters.command("approve") & filters.group
 )
-async def approve_toggle(client, message):
+async def approve_command(client, message):
 
     if not message.from_user:
         return
@@ -125,7 +127,7 @@ async def approve_toggle(client, message):
     chat_id = message.chat.id
     user_id = message.from_user.id
 
-    # Admin check
+    # Check admin
     if not await is_admin(
         client,
         chat_id,
@@ -150,26 +152,26 @@ async def approve_toggle(client, message):
     if new_status:
 
         await message.reply_text(
-            "🟢 **Auto Approve: ON**\n\n"
-            "New join requests will be "
-            "automatically approved."
+            "🟢 **AUTO APPROVE ON**\n\n"
+            "New join requests will now "
+            "be automatically approved."
         )
 
     else:
 
         await message.reply_text(
-            "🔴 **Auto Approve: OFF**\n\n"
+            "🔴 **AUTO APPROVE OFF**\n\n"
             "New join requests will no longer "
             "be automatically approved."
         )
 
 
 # =========================================================
-# JOIN REQUEST HANDLER
+# JOIN REQUEST
 # =========================================================
 
 @app.on_chat_join_request()
-async def join_request_handler(
+async def join_request(
     client,
     request: ChatJoinRequest
 ):
@@ -178,8 +180,7 @@ async def join_request_handler(
     user = request.from_user
 
     logging.info(
-        f"Join request received: "
-        f"{user.id} -> {chat_id}"
+        f"Join request: {user.id} -> {chat_id}"
     )
 
 
@@ -196,35 +197,28 @@ async def join_request_handler(
             try:
 
                 # IMPORTANT:
-                # user.id ki jagah user_chat_id
+                # Telegram provides a temporary
+                # user chat ID for join requests.
                 await client.send_message(
                     request.user_chat_id,
                     ad
                 )
 
                 logging.info(
-                    f"Ad sent to {user.id}"
-                )
-
-            except (
-                UserIsBlocked,
-                PeerIdInvalid
-            ):
-
-                logging.info(
-                    f"Cannot DM user {user.id}"
+                    f"Advertisement sent to {user.id}"
                 )
 
             except Exception as e:
 
                 logging.error(
-                    f"Ad DM error: {e}"
+                    f"Advertisement DM failed: {e}"
                 )
+
 
     except Exception as e:
 
         logging.error(
-            f"Get ad error: {e}"
+            f"Advertisement database error: {e}"
         )
 
 
@@ -234,11 +228,11 @@ async def join_request_handler(
 
     try:
 
-        auto = await get_auto_approve(
+        enabled = await get_auto_approve(
             chat_id
         )
 
-        if not auto:
+        if not enabled:
             return
 
         await client.approve_chat_join_request(
@@ -253,7 +247,7 @@ async def join_request_handler(
     except FloodWait as e:
 
         logging.warning(
-            f"FloodWait: sleeping {e.value}s"
+            f"FloodWait: {e.value} seconds"
         )
 
         await asyncio.sleep(
@@ -270,13 +264,13 @@ async def join_request_handler(
         except Exception as error:
 
             logging.error(
-                f"Retry approve error: {error}"
+                f"Approve retry failed: {error}"
             )
 
     except Exception as e:
 
         logging.error(
-            f"Auto approve error: {e}"
+            f"Auto approve failed: {e}"
         )
 
 
@@ -298,6 +292,7 @@ async def addmember_command(
     chat_id = message.chat.id
     user_id = message.from_user.id
 
+
     # Admin check
     if not await is_admin(
         client,
@@ -310,15 +305,16 @@ async def addmember_command(
         )
 
 
-    # Check argument
+    # Argument check
     if len(message.command) < 2:
 
         return await message.reply_text(
-            "❌ Usage:\n\n"
-            "`/addmember 10`\n"
-            "`/addmember 100`\n"
-            "`/addmember 1k`\n"
-            "`/addmember 10k`"
+            "❌ **Usage:**\n\n"
+            "/addmember 10\n"
+            "/addmember 20\n"
+            "/addmember 100\n"
+            "/addmember 1k\n"
+            "/addmember 10k"
         )
 
 
@@ -330,25 +326,22 @@ async def addmember_command(
     if amount is None or amount <= 0:
 
         return await message.reply_text(
-            "❌ Invalid number.\n\n"
-            "Example:\n"
-            "`/addmember 100`\n"
-            "`/addmember 1k`"
+            "❌ Invalid number."
         )
 
 
-    # Already running?
+    # Already running
     if chat_id in running_tasks:
 
         return await message.reply_text(
-            "⚠️ Approval process already running.\n\n"
-            "Use `/stop` first."
+            "⚠️ Approval process is already running.\n\n"
+            "Use /stop first."
         )
 
 
     # Create task
     task = asyncio.create_task(
-        approve_requests(
+        bulk_approve(
             client,
             message,
             chat_id,
@@ -369,10 +362,10 @@ async def addmember_command(
 
 
 # =========================================================
-# BULK APPROVAL
+# BULK APPROVE
 # =========================================================
 
-async def approve_requests(
+async def bulk_approve(
     client,
     message,
     chat_id,
@@ -389,15 +382,7 @@ async def approve_requests(
             chat_id
         ):
 
-            # Stop target reached
             if approved >= amount:
-                break
-
-
-            # Stop command
-            current_task = asyncio.current_task()
-
-            if current_task.cancelled():
                 break
 
 
@@ -411,16 +396,14 @@ async def approve_requests(
                 approved += 1
 
 
-                # Every 100 approvals log progress
                 if approved % 100 == 0:
 
                     logging.info(
                         f"{chat_id}: "
-                        f"{approved}/{amount} approved"
+                        f"{approved}/{amount}"
                     )
 
 
-                # Small delay
                 await asyncio.sleep(
                     0.08
                 )
@@ -458,7 +441,7 @@ async def approve_requests(
         await message.reply_text(
             "🛑 **Approval Stopped**\n\n"
             f"✅ Approved: `{approved:,}`\n"
-            f"⏳ Remaining requests were not processed."
+            "⏳ Remaining requests were not processed."
         )
 
 
@@ -500,7 +483,6 @@ async def stop_command(
     user_id = message.from_user.id
 
 
-    # Admin check
     if not await is_admin(
         client,
         chat_id,
@@ -534,7 +516,6 @@ async def stop_command(
 
 # =========================================================
 # /remove
-# REMOVE DELETED ACCOUNT REQUESTS
 # =========================================================
 
 @app.on_message(
@@ -552,7 +533,6 @@ async def remove_deleted(
     user_id = message.from_user.id
 
 
-    # Admin check
     if not await is_admin(
         client,
         chat_id,
@@ -568,11 +548,11 @@ async def remove_deleted(
 
         return await message.reply_text(
             "⚠️ Approval process is running.\n"
-            "Use `/stop` first."
+            "Use /stop first."
         )
 
 
-    status = await message.reply_text(
+    msg = await message.reply_text(
         "🧹 **Checking pending requests...**"
     )
 
@@ -592,7 +572,6 @@ async def remove_deleted(
             user = request.user
 
 
-            # Telegram deleted account
             if getattr(
                 user,
                 "is_deleted",
@@ -612,22 +591,20 @@ async def remove_deleted(
                         0.08
                     )
 
-
                 except FloodWait as e:
 
                     await asyncio.sleep(
                         e.value
                     )
 
-
                 except Exception as e:
 
                     logging.error(
-                        f"Remove error: {e}"
+                        f"Remove failed: {e}"
                     )
 
 
-        await status.edit_text(
+        await msg.edit_text(
             "✅ **Cleanup Completed**\n\n"
             f"🔎 Checked: `{checked:,}`\n"
             f"🗑 Removed: `{removed:,}`"
@@ -640,14 +617,14 @@ async def remove_deleted(
             f"Cleanup error: {e}"
         )
 
-        await status.edit_text(
+        await msg.edit_text(
             f"❌ Error:\n`{e}`"
         )
 
 
 # =========================================================
 # /setad
-# OWNER PRIVATE CHAT ONLY
+# OWNER PRIVATE CHAT
 # =========================================================
 
 @app.on_message(
@@ -662,7 +639,6 @@ async def set_ad_command(
         return
 
 
-    # Owner only
     if message.from_user.id != OWNER_ID:
 
         return await message.reply_text(
@@ -673,9 +649,8 @@ async def set_ad_command(
     if len(message.command) < 2:
 
         return await message.reply_text(
-            "📢 **Set Advertisement**\n\n"
-            "Usage:\n"
-            "`/setad Your advertisement text`"
+            "📢 **Usage:**\n\n"
+            "/setad Your advertisement"
         )
 
 
@@ -691,15 +666,15 @@ async def set_ad_command(
 
 
     await message.reply_text(
-        "✅ **Advertisement Saved**\n\n"
-        "New join-request users will receive "
-        "this advertisement."
+        "✅ **Advertisement Saved!**\n\n"
+        "New join-request users will "
+        "receive this advertisement."
     )
 
 
 # =========================================================
 # /delad
-# OWNER PRIVATE CHAT ONLY
+# OWNER PRIVATE CHAT
 # =========================================================
 
 @app.on_message(
@@ -725,7 +700,7 @@ async def delete_ad_command(
 
 
     await message.reply_text(
-        "🗑 **Advertisement Deleted**"
+        "🗑 **Advertisement Deleted!**"
     )
 
 
@@ -748,9 +723,11 @@ async def start_command(
 
 
 # =========================================================
-# START BOT
+# START
 # =========================================================
 
-print("🤖 Join Request Manager Bot Started...")
+print(
+    "🤖 Join Request Manager Bot Started..."
+)
 
 app.run()
