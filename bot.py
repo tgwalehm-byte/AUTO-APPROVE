@@ -6,12 +6,12 @@ import logging
 import aiohttp
 
 from pyrogram import Client, filters
-
 from pyrogram.enums import ChatMemberStatus
-
 from pyrogram.types import (
     ChatJoinRequest,
-    ChatMemberUpdated
+    ChatMemberUpdated,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
 )
 
 from database import (
@@ -75,8 +75,8 @@ app = Client(
 # =========================================================
 
 running_tasks = {}
-
 http_session = None
+bot_username = None
 
 
 # =========================================================
@@ -449,28 +449,52 @@ async def join_request(
 
         logging.info(
             f"📥 NEW JOIN REQUEST | "
-            f"{user.id} | {chat_id}"
+            f"User: {user.id} | "
+            f"Chat: {chat_id}"
         )
 
-        # Save group
+        # =================================================
+        # SAVE GROUP
+        # =================================================
+
         await register_group(
             request.chat
         )
 
-        # Save user
+        logging.info(
+            f"👥 GROUP SAVED | "
+            f"{request.chat.title} | "
+            f"{chat_id}"
+        )
+
+        # =================================================
+        # SAVE USER
+        # =================================================
+
         try:
 
+            # User request karte hi database me save
+            # /start ki zarurat nahi
             await save_user(
                 user.id
+            )
+
+            logging.info(
+                f"👤 USER SAVED | "
+                f"{user.id}"
             )
 
         except Exception as e:
 
             logging.error(
-                f"User save failed: {e}"
+                f"❌ USER SAVE FAILED | "
+                f"{user.id} | {e}"
             )
 
-        # Save request
+        # =================================================
+        # SAVE REQUEST
+        # =================================================
+
         try:
 
             await save_request(
@@ -486,23 +510,38 @@ async def join_request(
         except Exception as e:
 
             logging.error(
-                f"Request save failed: {e}"
+                f"❌ REQUEST SAVE FAILED | "
+                f"{user.id} | {e}"
             )
 
         # =================================================
-        # AD
+        # GET AD
         # =================================================
 
         try:
 
             ad = await get_ad()
 
-        except Exception:
+        except Exception as e:
+
+            logging.error(
+                f"Ad fetch failed: {e}"
+            )
 
             ad = None
 
+        # =================================================
+        # USER MENTION
+        # =================================================
+
+        mention = user.mention
+
+        # =================================================
+        # WELCOME MESSAGE
+        # =================================================
+
         welcome = (
-            "👋 **Hello!**\n\n"
+            f"👋 **Hello {mention}!**\n\n"
             "🤖 **Join Request Manager Bot**\n\n"
             "I help group administrators manage "
             "join requests and automate approvals.\n\n"
@@ -512,6 +551,10 @@ async def join_request(
             "📢 Advertisement System\n\n"
         )
 
+        # =================================================
+        # ADVERTISEMENT
+        # =================================================
+
         if ad:
 
             welcome += (
@@ -519,16 +562,67 @@ async def join_request(
                 f"{ad}\n\n"
             )
 
+        # =================================================
+        # FINAL MESSAGE
+        # =================================================
+
         welcome += (
             "✨ Thank you for requesting to join!"
         )
 
-        # DM
+        # =================================================
+        # BOT USERNAME
+        # =================================================
+
+        global bot_username
+
+        try:
+
+            if not bot_username:
+
+                bot_info = await client.get_me()
+
+                bot_username = bot_info.username
+
+        except Exception as e:
+
+            logging.error(
+                f"Bot info failed: {e}"
+            )
+
+        # =================================================
+        # ADD ME TO YOUR GROUP BUTTON
+        # =================================================
+
+        keyboard = None
+
+        if bot_username:
+
+            keyboard = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "➕ Add Me To Your Group",
+                            url=(
+                                f"https://t.me/"
+                                f"{bot_username}"
+                                f"?startgroup=true"
+                            )
+                        )
+                    ]
+                ]
+            )
+
+        # =================================================
+        # SEND WELCOME + AD
+        # =================================================
+
         try:
 
             await client.send_message(
-                user.id,
-                welcome
+                chat_id=user.id,
+                text=welcome,
+                reply_markup=keyboard
             )
 
             logging.info(
@@ -544,7 +638,7 @@ async def join_request(
             )
 
         # =================================================
-        # AUTO APPROVE
+        # CHECK AUTO APPROVE
         # =================================================
 
         auto_approve = await get_auto_approve(
@@ -560,7 +654,10 @@ async def join_request(
 
             return
 
-        # Fast approve
+        # =================================================
+        # AUTO APPROVE
+        # =================================================
+
         try:
 
             await approve_join_request(
@@ -577,10 +674,23 @@ async def join_request(
 
             return
 
-        await delete_request(
-            chat_id,
-            user.id
-        )
+        # =================================================
+        # DELETE REQUEST FROM DATABASE
+        # =================================================
+
+        try:
+
+            await delete_request(
+                chat_id,
+                user.id
+            )
+
+        except Exception as e:
+
+            logging.error(
+                f"Mongo request delete failed | "
+                f"{user.id} | {e}"
+            )
 
         logging.info(
             f"✅ AUTO APPROVED | "
@@ -692,7 +802,10 @@ async def bulk_approve(
 
                 error_text = str(e)
 
-                # Telegram rate limit
+                # =================================================
+                # RATE LIMIT
+                # =================================================
+
                 if (
                     "429" in error_text
                     or "Too Many Requests"
@@ -760,7 +873,7 @@ async def bulk_approve(
                 failed += 1
 
             # =================================================
-            # NO ARTIFICIAL DELAY
+            # SMALL DELAY
             # =================================================
 
             await asyncio.sleep(
@@ -939,7 +1052,10 @@ async def addmember_command(
             "Use `/stop` first."
         )
 
-    # Create task
+    # =================================================
+    # CREATE TASK
+    # =================================================
+
     task = asyncio.create_task(
         bulk_approve(
             client,
