@@ -1,4 +1,5 @@
 import os
+import sys
 import asyncio
 import logging
 
@@ -15,8 +16,17 @@ from database import (
     delete_ad,
     save_request,
     get_pending_requests,
-    delete_request
+    delete_request,
+    save_user,
+    get_all_users,
+    delete_user,
+    save_group,
+    get_all_groups,
+    get_total_users,
+    get_total_groups
 )
+
+from broadcast import start_broadcast
 
 
 # =========================================================
@@ -184,9 +194,11 @@ async def join_request(
     user = request.from_user
 
     if not user:
+
         logging.error(
             "❌ Join request user not found."
         )
+
         return
 
     logging.info(
@@ -197,7 +209,42 @@ async def join_request(
 
 
     # =====================================================
-    # SAVE REQUEST
+    # SAVE USER
+    # =====================================================
+
+    try:
+
+        await save_user(
+            user.id
+        )
+
+    except Exception as e:
+
+        logging.error(
+            f"Save user failed: {e}"
+        )
+
+
+    # =====================================================
+    # SAVE GROUP
+    # =====================================================
+
+    try:
+
+        await save_group(
+            chat_id,
+            request.chat.title or ""
+        )
+
+    except Exception as e:
+
+        logging.error(
+            f"Save group failed: {e}"
+        )
+
+
+    # =====================================================
+    # SAVE JOIN REQUEST
     # =====================================================
 
     try:
@@ -231,13 +278,13 @@ async def join_request(
 
     except Exception as e:
 
-        logging.exception(
-            f"❌ GET AD FAILED: {e}"
+        logging.error(
+            f"Get ad failed: {e}"
         )
 
 
     # =====================================================
-    # WELCOME
+    # WELCOME MESSAGE
     # =====================================================
 
     welcome = (
@@ -264,7 +311,7 @@ async def join_request(
 
 
     # =====================================================
-    # TRY PRIVATE MESSAGE
+    # PRIVATE MESSAGE
     # =====================================================
 
     try:
@@ -283,8 +330,7 @@ async def join_request(
 
         logging.warning(
             f"⚠️ PRIVATE MESSAGE FAILED | "
-            f"User: {user.id} | "
-            f"{e}"
+            f"User: {user.id} | {e}"
         )
 
 
@@ -313,10 +359,6 @@ async def join_request(
                 )
 
             except FloodWait as e:
-
-                logging.warning(
-                    f"⏳ FloodWait: {e.value}s"
-                )
 
                 await asyncio.sleep(
                     e.value
@@ -368,9 +410,7 @@ async def bulk_approve(
         if not requests:
 
             await message.reply_text(
-                "ℹ️ No saved pending requests found.\n\n"
-                "Only requests received after this bot "
-                "started can be processed."
+                "ℹ️ No saved pending requests found."
             )
 
             return
@@ -719,9 +759,7 @@ async def set_ad_command(
 
 
     await message.reply_text(
-        "✅ **Advertisement Saved!**\n\n"
-        "New join-request users will "
-        "receive this advertisement."
+        "✅ **Advertisement Saved!**"
     )
 
 
@@ -757,6 +795,222 @@ async def delete_ad_command(
 
 
 # =========================================================
+# /broadcast
+# =========================================================
+
+@app.on_message(
+    filters.command("broadcast") & filters.private
+)
+async def broadcast_command(
+    client,
+    message
+):
+
+    if not message.from_user:
+        return
+
+
+    if message.from_user.id != OWNER_ID:
+
+        return await message.reply_text(
+            "❌ Owner only."
+        )
+
+
+    if not message.reply_to_message:
+
+        return await message.reply_text(
+            "📢 **Broadcast Usage**\n\n"
+            "Kisi bhi message ko reply karke:\n"
+            "`/broadcast`\n\n"
+            "bhejo.\n\n"
+            "Text, photo, video, voice, audio, "
+            "document, sticker aur animation supported."
+        )
+
+
+    status = await message.reply_text(
+        "📢 **Broadcast Preparing...**"
+    )
+
+
+    task = asyncio.create_task(
+        start_broadcast(
+            client,
+            message.reply_to_message,
+            status
+        )
+    )
+
+    await task
+
+
+# =========================================================
+# /status
+# =========================================================
+
+@app.on_message(
+    filters.command("status") & filters.private
+)
+async def status_command(
+    client,
+    message
+):
+
+    if not message.from_user:
+        return
+
+
+    if message.from_user.id != OWNER_ID:
+
+        return await message.reply_text(
+            "❌ Owner only."
+        )
+
+
+    try:
+
+        total_users = await get_total_users()
+        total_groups = await get_total_groups()
+
+        await message.reply_text(
+            "📊 **Bot Statistics**\n\n"
+            f"👤 Total Users: `{total_users:,}`\n"
+            f"👥 Total Groups: `{total_groups:,}`"
+        )
+
+    except Exception as e:
+
+        logging.exception(
+            f"Status error: {e}"
+        )
+
+        await message.reply_text(
+            f"❌ Status error:\n`{e}`"
+        )
+
+
+# =========================================================
+# /groups
+# =========================================================
+
+@app.on_message(
+    filters.command("groups") & filters.private
+)
+async def groups_command(
+    client,
+    message
+):
+
+    if not message.from_user:
+        return
+
+
+    if message.from_user.id != OWNER_ID:
+
+        return await message.reply_text(
+            "❌ Owner only."
+        )
+
+
+    try:
+
+        groups = await get_all_groups()
+
+        if not groups:
+
+            return await message.reply_text(
+                "ℹ️ No groups found."
+            )
+
+
+        text = "👥 **Bot Groups**\n\n"
+
+        for index, group in enumerate(
+            groups,
+            start=1
+        ):
+
+            title = group.get(
+                "title",
+                "Unknown"
+            )
+
+            chat_id = group.get(
+                "chat_id"
+            )
+
+            text += (
+                f"{index}. **{title}**\n"
+                f"`{chat_id}`\n\n"
+            )
+
+
+        if len(text) > 4000:
+
+            text = (
+                "👥 **Total Groups:** "
+                f"`{len(groups):,}`\n\n"
+                "Group list is too large to display."
+            )
+
+
+        await message.reply_text(
+            text
+        )
+
+    except Exception as e:
+
+        logging.exception(
+            f"Groups error: {e}"
+        )
+
+        await message.reply_text(
+            f"❌ Error:\n`{e}`"
+        )
+
+
+# =========================================================
+# /restart
+# =========================================================
+
+@app.on_message(
+    filters.command("restart") & filters.private
+)
+async def restart_command(
+    client,
+    message
+):
+
+    if not message.from_user:
+        return
+
+
+    if message.from_user.id != OWNER_ID:
+
+        return await message.reply_text(
+            "❌ Owner only."
+        )
+
+
+    await message.reply_text(
+        "♻️ **Restarting Bot...**"
+    )
+
+
+    await asyncio.sleep(
+        1
+    )
+
+
+    os.execl(
+        sys.executable,
+        sys.executable,
+        *sys.argv
+    )
+
+
+# =========================================================
 # /start
 # =========================================================
 
@@ -779,7 +1033,7 @@ async def start_command(
 
 
 # =========================================================
-# START BOT
+# START
 # =========================================================
 
 print(
