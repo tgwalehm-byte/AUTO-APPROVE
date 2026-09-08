@@ -20,42 +20,52 @@ async def start_broadcast(
     status_message
 ):
 
-    success = 0
-    failed = 0
-    total = 0
+    user_success = 0
+    user_failed = 0
 
-    # Get all saved users
+    group_success = 0
+    group_failed = 0
+
     users = await get_all_users()
+    groups = await get_all_groups()
 
-    total = len(users)
+    total_users = len(users)
+    total_groups = len(groups)
 
-    if total == 0:
+    if total_users == 0 and total_groups == 0:
 
         return await status_message.edit_text(
             "❌ **Broadcast Failed**\n\n"
-            "No users found in database."
+            "No users or groups found."
         )
 
 
     await status_message.edit_text(
         "📢 **Broadcast Started**\n\n"
-        f"👥 Total Users: `{total:,}`\n"
+        f"👤 Users: `{total_users:,}`\n"
+        f"👥 Groups: `{total_groups:,}`\n\n"
         "⏳ Sending..."
     )
 
 
+    # =====================================================
+    # USER BROADCAST
+    # =====================================================
+
     for user in users:
 
-        user_id = user["user_id"]
+        user_id = user.get("user_id")
+
+        if not user_id:
+            continue
 
         try:
 
-            # Copy the owner's replied message
             await message.copy(
                 chat_id=user_id
             )
 
-            success += 1
+            user_success += 1
 
             await asyncio.sleep(0.08)
 
@@ -63,7 +73,7 @@ async def start_broadcast(
         except FloodWait as e:
 
             logging.warning(
-                f"FloodWait: {e.value}s"
+                f"User FloodWait: {e.value}s"
             )
 
             await asyncio.sleep(
@@ -76,32 +86,33 @@ async def start_broadcast(
                     chat_id=user_id
                 )
 
-                success += 1
+                user_success += 1
 
             except Exception as error:
 
-                failed += 1
+                user_failed += 1
 
                 logging.error(
-                    f"Retry failed {user_id}: {error}"
+                    f"User retry failed "
+                    f"{user_id}: {error}"
                 )
 
 
         except Exception as e:
 
-            failed += 1
+            user_failed += 1
 
             error_text = str(e).lower()
 
-            # User blocked/deleted bot
+            # Remove users who are no longer reachable
             if any(
                 x in error_text
                 for x in [
                     "user is blocked",
-                    "user not found",
                     "peer id invalid",
                     "input user deactivated",
                     "user deactivated",
+                    "user not found",
                     "chat not found"
                 ]
             ):
@@ -116,40 +127,103 @@ async def start_broadcast(
 
                     pass
 
-
             logging.error(
-                f"Broadcast failed "
+                f"User broadcast failed "
                 f"{user_id}: {e}"
             )
 
 
     # =====================================================
-    # GROUP COUNT
+    # GROUP BROADCAST
     # =====================================================
 
-    try:
+    for group in groups:
 
-        groups = await get_all_groups()
+        chat_id = group.get("chat_id")
 
-        group_count = len(groups)
+        if not chat_id:
+            continue
 
-    except Exception as e:
+        try:
 
-        logging.error(
-            f"Group count failed: {e}"
-        )
+            await message.copy(
+                chat_id=chat_id
+            )
 
-        group_count = 0
+            group_success += 1
+
+            await asyncio.sleep(0.15)
+
+
+        except FloodWait as e:
+
+            logging.warning(
+                f"Group FloodWait: {e.value}s"
+            )
+
+            await asyncio.sleep(
+                e.value
+            )
+
+            try:
+
+                await message.copy(
+                    chat_id=chat_id
+                )
+
+                group_success += 1
+
+            except Exception as error:
+
+                group_failed += 1
+
+                logging.error(
+                    f"Group retry failed "
+                    f"{chat_id}: {error}"
+                )
+
+
+        except Exception as e:
+
+            group_failed += 1
+
+            logging.error(
+                f"Group broadcast failed "
+                f"{chat_id}: {e}"
+            )
 
 
     # =====================================================
     # FINAL REPORT
     # =====================================================
 
+    total_success = (
+        user_success +
+        group_success
+    )
+
+    total_failed = (
+        user_failed +
+        group_failed
+    )
+
     await status_message.edit_text(
-        "✅ **Broadcast Completed**\n\n"
-        f"👥 Total Users: `{total:,}`\n"
-        f"📨 Successful: `{success:,}`\n"
-        f"❌ Failed: `{failed:,}`\n\n"
-        f"👥 Total Groups: `{group_count:,}`"
+        "✅ **BROADCAST COMPLETED**\n\n"
+
+        "👤 **USERS**\n"
+        "━━━━━━━━━━━━━━\n"
+        f"Total: `{total_users:,}`\n"
+        f"✅ Success: `{user_success:,}`\n"
+        f"❌ Failed: `{user_failed:,}`\n\n"
+
+        "👥 **GROUPS**\n"
+        "━━━━━━━━━━━━━━\n"
+        f"Total: `{total_groups:,}`\n"
+        f"✅ Success: `{group_success:,}`\n"
+        f"❌ Failed: `{group_failed:,}`\n\n"
+
+        "📊 **TOTAL**\n"
+        "━━━━━━━━━━━━━━\n"
+        f"✅ Sent: `{total_success:,}`\n"
+        f"❌ Failed: `{total_failed:,}`"
     )
