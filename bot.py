@@ -3,23 +3,16 @@ import sys
 import asyncio
 import logging
 
-from pyrogram import (
-    Client,
-    filters
-)
+from pyrogram import Client, filters
 
-from pyrogram.enums import (
-    ChatMemberStatus
-)
+from pyrogram.enums import ChatMemberStatus
 
 from pyrogram.types import (
     ChatJoinRequest,
     ChatMemberUpdated
 )
 
-from pyrogram.errors import (
-    FloodWait
-)
+from pyrogram.errors import FloodWait
 
 from database import (
     get_auto_approve,
@@ -34,8 +27,6 @@ from database import (
     delete_request,
 
     save_user,
-    get_all_users,
-    delete_user,
     get_total_users,
 
     save_group,
@@ -44,9 +35,7 @@ from database import (
     delete_group
 )
 
-from broadcast import (
-    start_broadcast
-)
+from broadcast import start_broadcast
 
 
 # =========================================================
@@ -55,11 +44,7 @@ from broadcast import (
 
 logging.basicConfig(
     level=logging.INFO,
-    format=(
-        "%(asctime)s - "
-        "%(levelname)s - "
-        "%(message)s"
-    )
+    format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
 
@@ -67,21 +52,10 @@ logging.basicConfig(
 # ENVIRONMENT
 # =========================================================
 
-API_ID = int(
-    os.environ["API_ID"]
-)
-
-API_HASH = os.environ[
-    "API_HASH"
-]
-
-BOT_TOKEN = os.environ[
-    "BOT_TOKEN"
-]
-
-OWNER_ID = int(
-    os.environ["OWNER_ID"]
-)
+API_ID = int(os.environ["API_ID"])
+API_HASH = os.environ["API_HASH"]
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+OWNER_ID = int(os.environ["OWNER_ID"])
 
 
 # =========================================================
@@ -97,7 +71,7 @@ app = Client(
 
 
 # =========================================================
-# RUNNING TASKS
+# RUNNING APPROVAL TASKS
 # =========================================================
 
 running_tasks = {}
@@ -112,7 +86,6 @@ async def is_admin(
     chat_id,
     user_id
 ):
-
     try:
 
         member = await client.get_chat_member(
@@ -138,9 +111,7 @@ async def is_admin(
 # REGISTER GROUP
 # =========================================================
 
-async def register_group(
-    chat
-):
+async def register_group(chat):
 
     if not chat:
         return
@@ -166,11 +137,19 @@ async def register_group(
 
 # =========================================================
 # NUMBER PARSER
+#
+# Examples:
+# 10      = 10
+# 100     = 100
+# 1k      = 1000
+# 10k     = 10000
+# 1.5k    = 1500
 # =========================================================
 
-def parse_amount(
-    value
-):
+def parse_amount(value):
+
+    if not value:
+        return None
 
     value = (
         value
@@ -187,13 +166,21 @@ def parse_amount(
                 value[:-1]
             )
 
+            if number <= 0:
+                return None
+
             return int(
                 number * 1000
             )
 
-        return int(value)
+        amount = int(value)
 
-    except Exception:
+        if amount <= 0:
+            return None
+
+        return amount
+
+    except (ValueError, TypeError):
 
         return None
 
@@ -215,38 +202,29 @@ async def chat_member_updated(
 
         chat = update.chat
 
-        # Only groups/supergroups
+        # Only groups / supergroups
         if chat.type not in (
             "group",
             "supergroup"
         ):
-
             return
 
         new_member = update.new_chat_member
-        old_member = update.old_chat_member
 
         if not new_member:
             return
 
-        # Is this update about our bot?
         if not new_member.user:
             return
 
+        # Check whether update is about our bot
         if not new_member.user.is_self:
             return
 
-
         new_status = new_member.status
-        old_status = (
-            old_member.status
-            if old_member
-            else None
-        )
-
 
         # =================================================
-        # BOT ADDED / ADMIN
+        # BOT ACTIVE
         # =================================================
 
         active_statuses = (
@@ -257,20 +235,17 @@ async def chat_member_updated(
 
         if new_status in active_statuses:
 
-            await register_group(
-                chat
-            )
+            await register_group(chat)
 
             logging.info(
                 f"🤖 BOT ACTIVE IN GROUP | "
-                f"{chat.title}"
+                f"{chat.title} | {chat.id}"
             )
 
             return
 
-
         # =================================================
-        # BOT LEFT / KICKED
+        # BOT LEFT / BANNED
         # =================================================
 
         if new_status in (
@@ -284,7 +259,7 @@ async def chat_member_updated(
 
             logging.info(
                 f"🚪 BOT REMOVED FROM GROUP | "
-                f"{chat.title}"
+                f"{chat.title} | {chat.id}"
             )
 
     except Exception as e:
@@ -296,6 +271,8 @@ async def chat_member_updated(
 
 # =========================================================
 # /approve
+#
+# /approve = Toggle ON/OFF
 # =========================================================
 
 @app.on_message(
@@ -317,7 +294,7 @@ async def approve_command(
     chat_id = message.chat.id
     user_id = message.from_user.id
 
-
+    # Admin check
     if not await is_admin(
         client,
         chat_id,
@@ -325,9 +302,8 @@ async def approve_command(
     ):
 
         return await message.reply_text(
-            "❌ Admin only."
+            "❌ **Admin only.**"
         )
-
 
     current = await get_auto_approve(
         chat_id
@@ -335,12 +311,10 @@ async def approve_command(
 
     new_status = not current
 
-
     await set_auto_approve(
         chat_id,
         new_status
     )
-
 
     if new_status:
 
@@ -369,167 +343,168 @@ async def join_request(
     request: ChatJoinRequest
 ):
 
-    chat_id = request.chat.id
-    user = request.from_user
-
-
-    if not user:
-
-        logging.error(
-            "❌ Join request user not found."
-        )
-
-        return
-
-
-    logging.info(
-        f"📥 NEW JOIN REQUEST | "
-        f"User: {user.id} | "
-        f"Chat: {chat_id}"
-    )
-
-
-    # =====================================================
-    # SAVE GROUP
-    # =====================================================
-
-    await register_group(
-        request.chat
-    )
-
-
-    # =====================================================
-    # SAVE USER
-    # =====================================================
-
     try:
 
-        await save_user(
-            user.id
-        )
+        chat_id = request.chat.id
+        user = request.from_user
+
+        if not user:
+
+            logging.error(
+                "❌ Join request user not found."
+            )
+
+            return
 
         logging.info(
-            f"👤 USER SAVED | "
-            f"{user.id}"
+            f"📥 NEW JOIN REQUEST | "
+            f"User: {user.id} | "
+            f"Chat: {chat_id}"
         )
 
-    except Exception as e:
+        # =================================================
+        # SAVE GROUP
+        # =================================================
 
-        logging.error(
-            f"User save failed: {e}"
+        await register_group(
+            request.chat
         )
 
+        # =================================================
+        # SAVE USER
+        # =================================================
 
-    # =====================================================
-    # SAVE REQUEST
-    # =====================================================
+        try:
 
-    try:
+            await save_user(
+                user.id
+            )
 
-        await save_request(
-            chat_id,
-            user.id
+            logging.info(
+                f"👤 USER SAVED | "
+                f"{user.id}"
+            )
+
+        except Exception as e:
+
+            logging.error(
+                f"User save failed: {e}"
+            )
+
+        # =================================================
+        # SAVE PENDING REQUEST
+        # =================================================
+
+        try:
+
+            await save_request(
+                chat_id,
+                user.id
+            )
+
+            logging.info(
+                f"💾 REQUEST SAVED | "
+                f"{user.id}"
+            )
+
+        except Exception as e:
+
+            logging.exception(
+                f"❌ REQUEST SAVE FAILED: {e}"
+            )
+
+        # =================================================
+        # GET AD
+        # =================================================
+
+        ad = None
+
+        try:
+
+            ad = await get_ad()
+
+        except Exception as e:
+
+            logging.error(
+                f"Ad loading failed: {e}"
+            )
+
+        # =================================================
+        # WELCOME MESSAGE
+        # =================================================
+
+        welcome = (
+            "👋 **Hello!**\n\n"
+            "🤖 **Join Request Manager Bot**\n\n"
+            "I help group administrators manage "
+            "join requests and automate approvals.\n\n"
+            "✅ Join Request Management\n"
+            "⚡ Auto Approval\n"
+            "👥 Bulk Approval\n"
+            "📢 Advertisement System\n\n"
         )
 
-        logging.info(
-            f"💾 REQUEST SAVED | "
-            f"{user.id}"
-        )
+        if ad:
 
-    except Exception as e:
-
-        logging.exception(
-            f"❌ REQUEST SAVE FAILED: {e}"
-        )
-
-
-    # =====================================================
-    # GET AD
-    # =====================================================
-
-    ad = None
-
-    try:
-
-        ad = await get_ad()
-
-    except Exception as e:
-
-        logging.error(
-            f"Ad loading failed: {e}"
-        )
-
-
-    # =====================================================
-    # WELCOME
-    # =====================================================
-
-    welcome = (
-        "👋 **Hello!**\n\n"
-        "🤖 **Join Request Manager Bot**\n\n"
-        "I help group administrators manage "
-        "join requests and automate approvals.\n\n"
-        "✅ Join Request Management\n"
-        "⚡ Auto Approval\n"
-        "👥 Bulk Approval\n"
-        "📢 Advertisement System\n\n"
-    )
-
-
-    if ad:
+            welcome += (
+                "📢 **Advertisement**\n\n"
+                f"{ad}\n\n"
+            )
 
         welcome += (
-            "📢 **Advertisement**\n\n"
-            f"{ad}\n\n"
+            "✨ Thank you for requesting to join!"
         )
 
+        # =================================================
+        # PRIVATE MESSAGE
+        # =================================================
 
-    welcome += (
-        "✨ Thank you for requesting to join!"
-    )
+        try:
 
+            await client.send_message(
+                user.id,
+                welcome
+            )
 
-    # =====================================================
-    # PRIVATE MESSAGE
-    # =====================================================
+            logging.info(
+                f"📩 WELCOME/AD SENT | "
+                f"{user.id}"
+            )
 
-    try:
+        except Exception as e:
 
-        await client.send_message(
-            user.id,
-            welcome
-        )
+            logging.warning(
+                f"⚠️ PRIVATE MESSAGE FAILED | "
+                f"{user.id} | {e}"
+            )
 
-        logging.info(
-            f"📩 WELCOME/AD SENT | "
-            f"{user.id}"
-        )
-
-    except Exception as e:
-
-        logging.warning(
-            f"⚠️ PRIVATE MESSAGE FAILED | "
-            f"{user.id} | {e}"
-        )
-
-
-    # =====================================================
-    # AUTO APPROVE
-    # =====================================================
-
-    try:
+        # =================================================
+        # CHECK AUTO APPROVE
+        # =================================================
 
         auto_approve = await get_auto_approve(
             chat_id
         )
 
-        if auto_approve:
+        if not auto_approve:
 
             logging.info(
-                f"⚡ AUTO APPROVING | "
+                f"⏸️ REQUEST KEPT PENDING | "
                 f"{user.id}"
             )
 
+            return
+
+        # =================================================
+        # AUTO APPROVE
+        # =================================================
+
+        logging.info(
+            f"⚡ AUTO APPROVING | "
+            f"{user.id}"
+        )
+
+        while True:
 
             try:
 
@@ -538,33 +513,44 @@ async def join_request(
                     user.id
                 )
 
+                break
+
             except FloodWait as e:
+
+                logging.warning(
+                    f"⏳ Auto approve FloodWait | "
+                    f"{e.value}s | "
+                    f"{user.id}"
+                )
 
                 await asyncio.sleep(
                     e.value
                 )
 
-                await client.approve_chat_join_request(
-                    chat_id,
-                    user.id
-                )
-
+        # Remove from Mongo after success
+        try:
 
             await delete_request(
                 chat_id,
                 user.id
             )
 
+        except Exception as e:
 
-            logging.info(
-                f"✅ AUTO APPROVED | "
-                f"{user.id}"
+            logging.error(
+                f"Request delete failed "
+                f"{user.id}: {e}"
             )
+
+        logging.info(
+            f"✅ AUTO APPROVED | "
+            f"{user.id}"
+        )
 
     except Exception as e:
 
         logging.exception(
-            f"❌ AUTO APPROVE FAILED: {e}"
+            f"❌ JOIN REQUEST HANDLER ERROR: {e}"
         )
 
 
@@ -581,79 +567,262 @@ async def bulk_approve(
 
     approved = 0
     failed = 0
+    stopped = False
+
+    progress = None
 
     try:
+
+        # =================================================
+        # GET SAVED REQUESTS
+        # =================================================
 
         requests = await get_pending_requests(
             chat_id,
             amount
         )
 
+        total_found = len(requests)
+
+        logging.info(
+            f"📋 BULK APPROVE | "
+            f"Requested: {amount} | "
+            f"Found: {total_found}"
+        )
 
         if not requests:
 
             await message.reply_text(
-                "ℹ️ No saved pending requests found."
+                "ℹ️ **No Saved Pending Requests**\n\n"
+                "Auto approve OFF karke naye "
+                "join requests aane do."
             )
 
             return
 
+        # =================================================
+        # PROGRESS MESSAGE
+        # =================================================
+
+        progress = await message.reply_text(
+            "🚀 **APPROVAL STARTED**\n\n"
+            f"🎯 Target: `{amount:,}`\n"
+            f"📋 Found: `{total_found:,}`\n"
+            f"⚡ Processed: `0`\n"
+            f"✅ Approved: `0`\n"
+            f"❌ Failed: `0`\n\n"
+            "🛑 Use `/stop` to stop."
+        )
+
+        # =================================================
+        # PROCESS REQUESTS
+        # =================================================
 
         for request in requests:
 
-            try:
+            # Stop check
+            if chat_id not in running_tasks:
 
-                await client.approve_chat_join_request(
-                    chat_id,
-                    request["user_id"]
-                )
+                stopped = True
 
-                approved += 1
+                break
 
+            user_id = request.get(
+                "user_id"
+            )
 
-                await delete_request(
-                    chat_id,
-                    request["user_id"]
-                )
-
-
-                await asyncio.sleep(
-                    0.08
-                )
-
-
-            except FloodWait as e:
-
-                await asyncio.sleep(
-                    e.value
-                )
-
-
-            except Exception as e:
+            if not user_id:
 
                 failed += 1
 
-                logging.error(
-                    f"Approval failed: {e}"
-                )
+                continue
 
+            success = False
 
-        await message.reply_text(
-            "✅ **Approval Completed**\n\n"
-            f"👥 Approved: `{approved:,}`\n"
-            f"❌ Failed: `{failed:,}`"
+            # =================================================
+            # APPROVE
+            # =================================================
+
+            while True:
+
+                # Stop check during FloodWait
+                if chat_id not in running_tasks:
+
+                    stopped = True
+
+                    break
+
+                try:
+
+                    await client.approve_chat_join_request(
+                        chat_id,
+                        user_id
+                    )
+
+                    success = True
+
+                    break
+
+                except FloodWait as e:
+
+                    logging.warning(
+                        f"⏳ FloodWait | "
+                        f"{e.value}s | "
+                        f"User: {user_id}"
+                    )
+
+                    await asyncio.sleep(
+                        e.value
+                    )
+
+                except Exception as e:
+
+                    logging.error(
+                        f"❌ Approval failed | "
+                        f"Chat: {chat_id} | "
+                        f"User: {user_id} | "
+                        f"{e}"
+                    )
+
+                    break
+
+            # If stopped
+            if stopped:
+                break
+
+            # =================================================
+            # SUCCESS
+            # =================================================
+
+            if success:
+
+                approved += 1
+
+                try:
+
+                    await delete_request(
+                        chat_id,
+                        user_id
+                    )
+
+                except Exception as e:
+
+                    logging.error(
+                        f"Request delete failed | "
+                        f"{user_id} | {e}"
+                    )
+
+            else:
+
+                failed += 1
+
+            # Small delay
+            await asyncio.sleep(
+                0.10
+            )
+
+            # =================================================
+            # UPDATE PROGRESS
+            # =================================================
+
+            processed = (
+                approved +
+                failed
+            )
+
+            if (
+                processed % 10 == 0
+                or processed == total_found
+            ):
+
+                try:
+
+                    await progress.edit_text(
+                        "🚀 **APPROVAL IN PROGRESS**\n\n"
+                        f"🎯 Target: `{amount:,}`\n"
+                        f"📋 Found: `{total_found:,}`\n"
+                        f"⚡ Processed: `{processed:,}`\n"
+                        f"✅ Approved: `{approved:,}`\n"
+                        f"❌ Failed: `{failed:,}`\n\n"
+                        "🛑 Use `/stop` to stop."
+                    )
+
+                except Exception:
+                    pass
+
+        # =================================================
+        # STOPPED
+        # =================================================
+
+        if stopped:
+
+            processed = (
+                approved +
+                failed
+            )
+
+            try:
+
+                if progress:
+
+                    await progress.edit_text(
+                        "🛑 **APPROVAL STOPPED**\n\n"
+                        f"🎯 Target: `{amount:,}`\n"
+                        f"📋 Found: `{total_found:,}`\n"
+                        f"⚡ Processed: `{processed:,}`\n"
+                        f"✅ Approved: `{approved:,}`\n"
+                        f"❌ Failed: `{failed:,}`"
+                    )
+
+            except Exception:
+                pass
+
+            return
+
+        # =================================================
+        # COMPLETED
+        # =================================================
+
+        processed = (
+            approved +
+            failed
         )
 
+        if progress:
+
+            try:
+
+                await progress.edit_text(
+                    "✅ **APPROVAL COMPLETED**\n\n"
+                    f"🎯 Requested: `{amount:,}`\n"
+                    f"📋 Found: `{total_found:,}`\n\n"
+                    f"⚡ Processed: `{processed:,}`\n"
+                    f"✅ Approved: `{approved:,}`\n"
+                    f"❌ Failed: `{failed:,}`"
+                )
+
+            except Exception:
+                pass
 
     except asyncio.CancelledError:
 
-        await message.reply_text(
-            "🛑 **Approval Stopped**\n\n"
-            f"✅ Approved: `{approved:,}`"
+        logging.info(
+            f"🛑 BULK APPROVE TASK CANCELLED | "
+            f"{chat_id}"
         )
 
-        raise
+        try:
 
+            await message.reply_text(
+                "🛑 **APPROVAL STOPPED**\n\n"
+                f"✅ Approved: `{approved:,}`\n"
+                f"❌ Failed: `{failed:,}`"
+            )
+
+        except Exception:
+            pass
+
+        raise
 
     except Exception as e:
 
@@ -661,10 +830,15 @@ async def bulk_approve(
             f"Bulk approval error: {e}"
         )
 
-        await message.reply_text(
-            f"❌ Error:\n`{e}`"
-        )
+        try:
 
+            await message.reply_text(
+                "❌ **Bulk Approval Error**\n\n"
+                f"`{e}`"
+            )
+
+        except Exception:
+            pass
 
     finally:
 
@@ -690,15 +864,16 @@ async def addmember_command(
     if not message.from_user:
         return
 
-
     await register_group(
         message.chat
     )
 
-
     chat_id = message.chat.id
     user_id = message.from_user.id
 
+    # =================================================
+    # ADMIN CHECK
+    # =================================================
 
     if not await is_admin(
         client,
@@ -707,40 +882,56 @@ async def addmember_command(
     ):
 
         return await message.reply_text(
-            "❌ Admin only."
+            "❌ **Admin only.**"
         )
 
+    # =================================================
+    # USAGE
+    # =================================================
 
     if len(message.command) < 2:
 
         return await message.reply_text(
             "❌ **Usage:**\n\n"
-            "/addmember 10\n"
-            "/addmember 100\n"
-            "/addmember 1k\n"
-            "/addmember 10k"
+            "`/addmember 10`\n"
+            "`/addmember 100`\n"
+            "`/addmember 1k`\n"
+            "`/addmember 10k`"
         )
 
+    # =================================================
+    # PARSE NUMBER
+    # =================================================
 
     amount = parse_amount(
         message.command[1]
     )
 
-
-    if amount is None or amount <= 0:
+    if amount is None:
 
         return await message.reply_text(
-            "❌ Invalid number."
+            "❌ **Invalid Number**\n\n"
+            "Examples:\n"
+            "`10`\n"
+            "`100`\n"
+            "`1k`\n"
+            "`10k`"
         )
 
+    # =================================================
+    # CHECK RUNNING TASK
+    # =================================================
 
     if chat_id in running_tasks:
 
         return await message.reply_text(
-            "⚠️ Approval process is already running.\n\n"
-            "Use /stop first."
+            "⚠️ **Approval Already Running**\n\n"
+            "Use `/stop` first."
         )
 
+    # =================================================
+    # START TASK
+    # =================================================
 
     task = asyncio.create_task(
         bulk_approve(
@@ -751,16 +942,14 @@ async def addmember_command(
         )
     )
 
-
     running_tasks[
         chat_id
     ] = task
 
-
     await message.reply_text(
-        "🚀 **Approval Started**\n\n"
+        "🚀 **APPROVAL STARTED**\n\n"
         f"🎯 Target: `{amount:,}`\n"
-        "⚡ Processing saved requests...\n\n"
+        "📋 Saved pending requests will be processed.\n\n"
         "🛑 Use `/stop` to stop."
     )
 
@@ -781,16 +970,14 @@ async def stop_command(
     if not message.from_user:
         return
 
-
     await register_group(
         message.chat
     )
 
-
     chat_id = message.chat.id
     user_id = message.from_user.id
 
-
+    # Admin check
     if not await is_admin(
         client,
         chat_id,
@@ -798,24 +985,27 @@ async def stop_command(
     ):
 
         return await message.reply_text(
-            "❌ Admin only."
+            "❌ **Admin only.**"
         )
-
 
     task = running_tasks.get(
         chat_id
     )
 
-
     if not task:
 
         return await message.reply_text(
-            "ℹ️ No approval process is running."
+            "ℹ️ **No approval process is running.**"
         )
 
+    # Remove first so bulk loop stops
+    running_tasks.pop(
+        chat_id,
+        None
+    )
 
+    # Cancel task
     task.cancel()
-
 
     await message.reply_text(
         "🛑 **Stopping approval process...**"
@@ -838,16 +1028,14 @@ async def remove_saved_requests(
     if not message.from_user:
         return
 
-
     await register_group(
         message.chat
     )
 
-
     chat_id = message.chat.id
     user_id = message.from_user.id
 
-
+    # Admin check
     if not await is_admin(
         client,
         chat_id,
@@ -855,85 +1043,128 @@ async def remove_saved_requests(
     ):
 
         return await message.reply_text(
-            "❌ Admin only."
+            "❌ **Admin only.**"
         )
-
 
     if chat_id in running_tasks:
 
         return await message.reply_text(
-            "⚠️ Approval process is running.\n"
-            "Use /stop first."
+            "⚠️ **Approval process is running.**\n\n"
+            "Use `/stop` first."
         )
 
+    try:
 
-    requests = await get_pending_requests(
-        chat_id,
-        10000
-    )
+        requests = await get_pending_requests(
+            chat_id,
+            10000
+        )
 
+    except Exception as e:
+
+        logging.exception(
+            f"Get pending requests error: {e}"
+        )
+
+        return await message.reply_text(
+            f"❌ Error:\n`{e}`"
+        )
 
     if not requests:
 
         return await message.reply_text(
-            "ℹ️ No saved pending requests found."
+            "ℹ️ **No Saved Pending Requests**"
         )
-
 
     msg = await message.reply_text(
         "🧹 **Removing saved pending requests...**"
     )
 
-
     removed = 0
     failed = 0
 
-
     for request in requests:
+
+        user_id = request.get(
+            "user_id"
+        )
+
+        if not user_id:
+            failed += 1
+            continue
 
         try:
 
             await client.decline_chat_join_request(
                 chat_id,
-                request["user_id"]
+                user_id
             )
-
 
             await delete_request(
                 chat_id,
-                request["user_id"]
+                user_id
             )
 
-
             removed += 1
-
 
             await asyncio.sleep(
                 0.08
             )
 
-
         except FloodWait as e:
+
+            logging.warning(
+                f"Remove FloodWait | "
+                f"{e.value}s"
+            )
 
             await asyncio.sleep(
                 e.value
             )
 
+            try:
+
+                await client.decline_chat_join_request(
+                    chat_id,
+                    user_id
+                )
+
+                await delete_request(
+                    chat_id,
+                    user_id
+                )
+
+                removed += 1
+
+            except Exception as retry_error:
+
+                failed += 1
+
+                logging.error(
+                    f"Remove retry failed | "
+                    f"{user_id} | "
+                    f"{retry_error}"
+                )
 
         except Exception as e:
 
             failed += 1
 
             logging.error(
-                f"Remove failed: {e}"
+                f"Remove failed | "
+                f"{user_id} | {e}"
             )
 
+    try:
 
-    await msg.edit_text(
-        "✅ **Cleanup Completed**\n\n"
-        f"🗑 Removed: `{removed:,}`\n"
-        f"❌ Failed: `{failed:,}`"
-    )
+        await msg.edit_text(
+            "✅ **CLEANUP COMPLETED**\n\n"
+            f"🗑 Removed: `{removed:,}`\n"
+            f"❌ Failed: `{failed:,}`"
+        )
+
+    except Exception:
+        pass
 
 
 # =========================================================
@@ -952,32 +1183,27 @@ async def set_ad_command(
     if not message.from_user:
         return
 
-
     if message.from_user.id != OWNER_ID:
 
         return await message.reply_text(
-            "❌ Owner only."
+            "❌ **Owner only.**"
         )
-
 
     if len(message.command) < 2:
 
         return await message.reply_text(
             "📢 **Usage:**\n\n"
-            "/setad Your advertisement"
+            "`/setad Your advertisement`"
         )
-
 
     text = message.text.split(
         None,
         1
     )[1]
 
-
     await save_ad(
         text
     )
-
 
     await message.reply_text(
         "✅ **Advertisement Saved!**"
@@ -1000,16 +1226,13 @@ async def delete_ad_command(
     if not message.from_user:
         return
 
-
     if message.from_user.id != OWNER_ID:
 
         return await message.reply_text(
-            "❌ Owner only."
+            "❌ **Owner only.**"
         )
 
-
     await delete_ad()
-
 
     await message.reply_text(
         "🗑 **Advertisement Deleted!**"
@@ -1032,13 +1255,11 @@ async def broadcast_command(
     if not message.from_user:
         return
 
-
     if message.from_user.id != OWNER_ID:
 
         return await message.reply_text(
-            "❌ Owner only."
+            "❌ **Owner only.**"
         )
-
 
     if not message.reply_to_message:
 
@@ -1057,11 +1278,9 @@ async def broadcast_command(
             "✅ Animation"
         )
 
-
     status = await message.reply_text(
         "📢 **Broadcast Preparing...**"
     )
-
 
     await start_broadcast(
         client,
@@ -1086,27 +1305,22 @@ async def status_command(
     if not message.from_user:
         return
 
-
     if message.from_user.id != OWNER_ID:
 
         return await message.reply_text(
-            "❌ Owner only."
+            "❌ **Owner only.**"
         )
-
 
     try:
 
         total_users = await get_total_users()
-
         total_groups = await get_total_groups()
 
-
         await message.reply_text(
-            "📊 **Bot Statistics**\n\n"
+            "📊 **BOT STATISTICS**\n\n"
             f"👤 Total Users: `{total_users:,}`\n"
             f"👥 Total Groups: `{total_groups:,}`"
         )
-
 
     except Exception as e:
 
@@ -1114,9 +1328,9 @@ async def status_command(
             f"Status error: {e}"
         )
 
-
         await message.reply_text(
-            f"❌ Status Error:\n`{e}`"
+            f"❌ **Status Error**\n\n"
+            f"`{e}`"
         )
 
 
@@ -1136,30 +1350,25 @@ async def groups_command(
     if not message.from_user:
         return
 
-
     if message.from_user.id != OWNER_ID:
 
         return await message.reply_text(
-            "❌ Owner only."
+            "❌ **Owner only.**"
         )
-
 
     try:
 
         groups = await get_all_groups()
 
-
         if not groups:
 
             return await message.reply_text(
-                "ℹ️ No groups found."
+                "ℹ️ **No groups found.**"
             )
 
-
         text = (
-            "👥 **Bot Groups**\n\n"
+            "👥 **BOT GROUPS**\n\n"
         )
-
 
         for index, group in enumerate(
             groups,
@@ -1175,12 +1384,10 @@ async def groups_command(
                 "chat_id"
             )
 
-
             text += (
                 f"{index}. **{title}**\n"
                 f"`{chat_id}`\n\n"
             )
-
 
         if len(text) > 4000:
 
@@ -1190,11 +1397,9 @@ async def groups_command(
                 "Group list is too large to display."
             )
 
-
         await message.reply_text(
             text
         )
-
 
     except Exception as e:
 
@@ -1202,9 +1407,9 @@ async def groups_command(
             f"Groups error: {e}"
         )
 
-
         await message.reply_text(
-            f"❌ Error:\n`{e}`"
+            f"❌ **Error**\n\n"
+            f"`{e}`"
         )
 
 
@@ -1224,23 +1429,19 @@ async def restart_command(
     if not message.from_user:
         return
 
-
     if message.from_user.id != OWNER_ID:
 
         return await message.reply_text(
-            "❌ Owner only."
+            "❌ **Owner only.**"
         )
-
 
     await message.reply_text(
         "♻️ **Restarting Bot...**"
     )
 
-
     await asyncio.sleep(
         1
     )
-
 
     os.execl(
         sys.executable,
@@ -1265,9 +1466,7 @@ async def start_command(
     if not message.from_user:
         return
 
-
     user = message.from_user
-
 
     try:
 
@@ -1286,7 +1485,6 @@ async def start_command(
             f"Start user save failed: {e}"
         )
 
-
     await message.reply_text(
         "👋 **Hello!**\n\n"
         "🤖 **Join Request Manager Bot**\n\n"
@@ -1301,7 +1499,7 @@ async def start_command(
 
 
 # =========================================================
-# START
+# START BOT
 # =========================================================
 
 print(
