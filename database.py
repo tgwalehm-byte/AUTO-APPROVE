@@ -1,8 +1,12 @@
 from motor.motor_asyncio import AsyncIOMotorClient
+
 from config import MONGO_URL
 
 
-# MongoDB connection
+# ============================================================
+# MONGODB CONNECTION
+# ============================================================
+
 mongo_client = AsyncIOMotorClient(
     MONGO_URL,
     serverSelectionTimeoutMS=10000,
@@ -11,20 +15,28 @@ mongo_client = AsyncIOMotorClient(
 db = mongo_client["auto_join_request_bot"]
 
 
-# Collections
+# ============================================================
+# COLLECTIONS
+# ============================================================
+
 users_collection = db["users"]
 chats_collection = db["chats"]
 groups_collection = db["groups"]
 ads_collection = db["ads"]
 
 
+# ============================================================
+# DATABASE CLASS
+# ============================================================
+
 class Database:
 
-    # -------------------------
+    # ========================================================
     # USERS
-    # -------------------------
+    # ========================================================
 
     async def save_user(self, user):
+
         if not user:
             return
 
@@ -42,29 +54,39 @@ class Database:
         )
 
     async def user_exists(self, user_id: int):
-        return await users_collection.find_one(
+
+        user = await users_collection.find_one(
             {"_id": user_id}
-        ) is not None
+        )
+
+        return user is not None
 
     async def get_user_ids(self):
+
         cursor = users_collection.find(
             {},
             {"_id": 1}
         )
 
-        return [
-            document["_id"]
-            async for document in cursor
-        ]
+        user_ids = []
+
+        async for document in cursor:
+            user_ids.append(
+                document["_id"]
+            )
+
+        return user_ids
 
     async def count_users(self):
+
         return await users_collection.count_documents({})
 
-    # -------------------------
-    # GROUPS / CHANNELS
-    # -------------------------
+    # ========================================================
+    # CHATS
+    # ========================================================
 
     async def save_chat(self, chat):
+
         if not chat:
             return
 
@@ -75,15 +97,40 @@ class Database:
             {
                 "$set": {
                     "chat_id": chat.id,
-                    "title": getattr(chat, "title", None),
-                    "username": getattr(chat, "username", None),
+                    "title": getattr(
+                        chat,
+                        "title",
+                        None
+                    ),
+                    "username": getattr(
+                        chat,
+                        "username",
+                        None
+                    ),
                     "type": chat_type,
                 }
             },
             upsert=True,
         )
 
+        # If group, also save in groups collection.
+        if chat.type in (
+            "group",
+            "supergroup",
+        ):
+
+            await self.save_group(chat)
+
+    async def count_chats(self):
+
+        return await chats_collection.count_documents({})
+
+    # ========================================================
+    # GROUPS
+    # ========================================================
+
     async def save_group(self, chat):
+
         if not chat:
             return
 
@@ -92,29 +139,65 @@ class Database:
             {
                 "$set": {
                     "chat_id": chat.id,
-                    "title": getattr(chat, "title", None),
-                    "username": getattr(chat, "username", None),
+                    "title": getattr(
+                        chat,
+                        "title",
+                        None
+                    ),
+                    "username": getattr(
+                        chat,
+                        "username",
+                        None
+                    ),
                     "type": str(chat.type),
                 },
+
+                # IMPORTANT:
+                # New groups are OFF by default.
                 "$setOnInsert": {
-                    # IMPORTANT:
-                    # Group auto approval is OFF by default.
-                    "approve_enabled": False,
-                },
+                    "approve_enabled": False
+                }
             },
             upsert=True,
         )
 
     async def get_group(self, chat_id: int):
+
         return await groups_collection.find_one(
             {"_id": chat_id}
         )
+
+    async def get_group_ids(self):
+
+        cursor = groups_collection.find(
+            {},
+            {"_id": 1}
+        )
+
+        group_ids = []
+
+        async for document in cursor:
+
+            group_ids.append(
+                document["_id"]
+            )
+
+        return group_ids
+
+    async def count_groups(self):
+
+        return await groups_collection.count_documents({})
+
+    # ========================================================
+    # GROUP APPROVAL SETTING
+    # ========================================================
 
     async def set_group_approval(
         self,
         chat_id: int,
         enabled: bool
     ):
+
         await groups_collection.update_one(
             {"_id": chat_id},
             {
@@ -129,67 +212,115 @@ class Database:
         self,
         chat_id: int
     ):
-        group = await self.get_group(chat_id)
+
+        group = await groups_collection.find_one(
+            {"_id": chat_id}
+        )
 
         if not group:
             return False
 
-        return group.get(
-            "approve_enabled",
-            False
+        return bool(
+            group.get(
+                "approve_enabled",
+                False
+            )
         )
 
-    async def get_group_ids(self):
-        cursor = groups_collection.find(
-            {},
-            {"_id": 1}
+    # ========================================================
+    # CHANNELS
+    # ========================================================
+
+    async def count_channels(self):
+
+        return await chats_collection.count_documents(
+            {
+                "type": "ChatType.CHANNEL"
+            }
         )
 
-        return [
-            document["_id"]
-            async for document in cursor
-        ]
-
-    async def count_groups(self):
-        return await groups_collection.count_documents({})
-
-    async def count_chats(self):
-        return await chats_collection.count_documents({})
-
-    # -------------------------
+    # ========================================================
     # ADVERTISEMENT
-    # -------------------------
+    # ========================================================
 
     async def set_ad(
         self,
         chat_id: int,
         message_id: int
     ):
+
         await ads_collection.update_one(
             {"_id": "main"},
             {
                 "$set": {
+                    "type": "message",
                     "chat_id": chat_id,
                     "message_id": message_id,
+                    "text": None,
+                }
+            },
+            upsert=True,
+        )
+
+    async def set_ad_text(
+        self,
+        text: str
+    ):
+
+        await ads_collection.update_one(
+            {"_id": "main"},
+            {
+                "$set": {
+                    "type": "text",
+                    "text": text,
+                    "chat_id": None,
+                    "message_id": None,
                 }
             },
             upsert=True,
         )
 
     async def get_ad(self):
-        return await ads_collection.find_one(
-            {"_id": "main"}
-        )
 
-    async def delete_ad(self):
-        await ads_collection.delete_one(
+        return await ads_collection.find_one(
             {"_id": "main"}
         )
 
     async def has_ad(self):
-        return await ads_collection.find_one(
-            {"_id": "main"}
-        ) is not None
 
+        ad = await ads_collection.find_one(
+            {"_id": "main"}
+        )
+
+        return ad is not None
+
+    async def delete_ad(self):
+
+        await ads_collection.delete_one(
+            {"_id": "main"}
+        )
+
+    # ========================================================
+    # DATABASE TEST
+    # ========================================================
+
+    async def ping(self):
+
+        try:
+
+            await mongo_client.admin.command(
+                "ping"
+            )
+
+            return True
+
+        except Exception:
+
+            return False
+
+
+# ============================================================
+# DATABASE INSTANCE
+# ============================================================
 
 db = Database()
