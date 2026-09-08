@@ -14,8 +14,6 @@ from pyrogram.types import (
     ChatMemberUpdated
 )
 
-from pyrogram.errors import FloodWait
-
 from database import (
     get_auto_approve,
     set_auto_approve,
@@ -73,10 +71,42 @@ app = Client(
 
 
 # =========================================================
-# RUNNING TASKS
+# GLOBALS
 # =========================================================
 
 running_tasks = {}
+
+http_session = None
+
+
+# =========================================================
+# HTTP SESSION
+# =========================================================
+
+async def get_http_session():
+
+    global http_session
+
+    if http_session is None or http_session.closed:
+
+        connector = aiohttp.TCPConnector(
+            limit=100,
+            limit_per_host=100,
+            ttl_dns_cache=300
+        )
+
+        timeout = aiohttp.ClientTimeout(
+            total=30,
+            connect=10,
+            sock_read=30
+        )
+
+        http_session = aiohttp.ClientSession(
+            connector=connector,
+            timeout=timeout
+        )
+
+    return http_session
 
 
 # =========================================================
@@ -89,7 +119,7 @@ BOT_API_URL = (
 
 
 # =========================================================
-# BOT API REQUEST
+# BOT API CALL
 # =========================================================
 
 async def bot_api_call(
@@ -97,47 +127,39 @@ async def bot_api_call(
     data
 ):
 
+    session = await get_http_session()
+
     url = f"{BOT_API_URL}/{method}"
 
-    timeout = aiohttp.ClientTimeout(
-        total=60
-    )
+    async with session.post(
+        url,
+        json=data
+    ) as response:
 
-    async with aiohttp.ClientSession(
-        timeout=timeout
-    ) as session:
+        result = await response.json()
 
-        async with session.post(
-            url,
-            json=data
-        ) as response:
+        if not result.get("ok"):
 
-            result = await response.json()
-
-            if not result.get("ok"):
-
-                error_code = result.get(
-                    "error_code",
-                    "UNKNOWN"
-                )
-
-                description = result.get(
-                    "description",
-                    "Unknown Telegram error"
-                )
-
-                raise RuntimeError(
-                    f"Telegram API [{error_code}] "
-                    f"{description}"
-                )
-
-            return result.get(
-                "result"
+            error_code = result.get(
+                "error_code",
+                "UNKNOWN"
             )
+
+            description = result.get(
+                "description",
+                "Unknown Telegram error"
+            )
+
+            raise RuntimeError(
+                f"Telegram API [{error_code}] "
+                f"{description}"
+            )
+
+        return result.get("result")
 
 
 # =========================================================
-# APPROVE JOIN REQUEST
+# APPROVE REQUEST
 # =========================================================
 
 async def approve_join_request(
@@ -155,7 +177,7 @@ async def approve_join_request(
 
 
 # =========================================================
-# DECLINE JOIN REQUEST
+# DECLINE REQUEST
 # =========================================================
 
 async def decline_join_request(
@@ -217,11 +239,6 @@ async def register_group(chat):
         await save_group(
             chat.id,
             chat.title or ""
-        )
-
-        logging.info(
-            f"👥 GROUP SAVED | "
-            f"{chat.title} | {chat.id}"
         )
 
     except Exception as e:
@@ -313,10 +330,6 @@ async def chat_member_updated(
 
         new_status = new_member.status
 
-        # =================================================
-        # BOT ACTIVE
-        # =================================================
-
         active_statuses = (
             ChatMemberStatus.MEMBER,
             ChatMemberStatus.ADMINISTRATOR,
@@ -328,15 +341,11 @@ async def chat_member_updated(
             await register_group(chat)
 
             logging.info(
-                f"🤖 BOT ACTIVE IN GROUP | "
+                f"🤖 BOT ACTIVE | "
                 f"{chat.title} | {chat.id}"
             )
 
             return
-
-        # =================================================
-        # BOT REMOVED
-        # =================================================
 
         if new_status in (
             ChatMemberStatus.LEFT,
@@ -348,7 +357,7 @@ async def chat_member_updated(
             )
 
             logging.info(
-                f"🚪 BOT REMOVED FROM GROUP | "
+                f"🚪 BOT REMOVED | "
                 f"{chat.title}"
             )
 
@@ -375,12 +384,12 @@ async def approve_command(
     if not message.from_user:
         return
 
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
     await register_group(
         message.chat
     )
-
-    chat_id = message.chat.id
-    user_id = message.from_user.id
 
     if not await is_admin(
         client,
@@ -436,40 +445,23 @@ async def join_request(
         user = request.from_user
 
         if not user:
-
-            logging.error(
-                "❌ Join request user not found."
-            )
-
             return
 
         logging.info(
             f"📥 NEW JOIN REQUEST | "
-            f"User: {user.id} | "
-            f"Chat: {chat_id}"
+            f"{user.id} | {chat_id}"
         )
 
-        # =================================================
-        # SAVE GROUP
-        # =================================================
-
+        # Save group
         await register_group(
             request.chat
         )
 
-        # =================================================
-        # SAVE USER
-        # =================================================
-
+        # Save user
         try:
 
             await save_user(
                 user.id
-            )
-
-            logging.info(
-                f"👤 USER SAVED | "
-                f"{user.id}"
             )
 
         except Exception as e:
@@ -478,10 +470,7 @@ async def join_request(
                 f"User save failed: {e}"
             )
 
-        # =================================================
-        # SAVE REQUEST
-        # =================================================
-
+        # Save request
         try:
 
             await save_request(
@@ -496,29 +485,21 @@ async def join_request(
 
         except Exception as e:
 
-            logging.exception(
-                f"❌ REQUEST SAVE FAILED: {e}"
+            logging.error(
+                f"Request save failed: {e}"
             )
 
         # =================================================
-        # GET AD
+        # AD
         # =================================================
-
-        ad = None
 
         try:
 
             ad = await get_ad()
 
-        except Exception as e:
+        except Exception:
 
-            logging.error(
-                f"Ad loading failed: {e}"
-            )
-
-        # =================================================
-        # WELCOME
-        # =================================================
+            ad = None
 
         welcome = (
             "👋 **Hello!**\n\n"
@@ -542,10 +523,7 @@ async def join_request(
             "✨ Thank you for requesting to join!"
         )
 
-        # =================================================
-        # PRIVATE MESSAGE
-        # =================================================
-
+        # DM
         try:
 
             await client.send_message(
@@ -561,12 +539,12 @@ async def join_request(
         except Exception as e:
 
             logging.warning(
-                f"⚠️ PRIVATE MESSAGE FAILED | "
+                f"⚠️ DM FAILED | "
                 f"{user.id} | {e}"
             )
 
         # =================================================
-        # AUTO APPROVE CHECK
+        # AUTO APPROVE
         # =================================================
 
         auto_approve = await get_auto_approve(
@@ -582,37 +560,22 @@ async def join_request(
 
             return
 
-        # =================================================
-        # AUTO APPROVE
-        # =================================================
+        # Fast approve
+        try:
 
-        logging.info(
-            f"⚡ AUTO APPROVING | "
-            f"{user.id}"
-        )
+            await approve_join_request(
+                chat_id,
+                user.id
+            )
 
-        while True:
+        except Exception as e:
 
-            try:
+            logging.error(
+                f"❌ AUTO APPROVE FAILED | "
+                f"{user.id} | {e}"
+            )
 
-                await approve_join_request(
-                    chat_id,
-                    user.id
-                )
-
-                break
-
-            except Exception as e:
-
-                error_text = str(e)
-
-                if "429" in error_text:
-
-                    await asyncio.sleep(3)
-
-                    continue
-
-                raise
+            return
 
         await delete_request(
             chat_id,
@@ -650,10 +613,6 @@ async def bulk_approve(
 
     try:
 
-        # =================================================
-        # GET REQUESTS
-        # =================================================
-
         requests = await get_pending_requests(
             chat_id,
             amount
@@ -679,10 +638,6 @@ async def bulk_approve(
 
             return
 
-        # =================================================
-        # PROGRESS
-        # =================================================
-
         progress = await message.reply_text(
             "🚀 **APPROVAL STARTED**\n\n"
             f"🎯 Target: `{amount:,}`\n"
@@ -694,7 +649,7 @@ async def bulk_approve(
         )
 
         # =================================================
-        # LOOP
+        # BULK LOOP
         # =================================================
 
         for request in requests:
@@ -716,69 +671,70 @@ async def bulk_approve(
             success = False
 
             # =================================================
-            # BOT API APPROVAL
+            # APPROVE
             # =================================================
 
-            while True:
+            try:
 
-                if chat_id not in running_tasks:
+                await approve_join_request(
+                    chat_id,
+                    user_id
+                )
 
-                    stopped = True
-                    break
+                success = True
 
-                try:
+                logging.info(
+                    f"✅ APPROVED | "
+                    f"{user_id}"
+                )
 
-                    await approve_join_request(
-                        chat_id,
-                        user_id
+            except Exception as e:
+
+                error_text = str(e)
+
+                # Telegram rate limit
+                if (
+                    "429" in error_text
+                    or "Too Many Requests"
+                    in error_text
+                ):
+
+                    logging.warning(
+                        f"⏳ Rate limit | "
+                        f"{user_id}"
                     )
 
-                    success = True
-
-                    logging.info(
-                        f"✅ APPROVED | "
-                        f"Chat: {chat_id} | "
-                        f"User: {user_id}"
+                    await asyncio.sleep(
+                        3
                     )
 
-                    break
+                    try:
 
-                except Exception as e:
-
-                    error_text = str(e)
-
-                    # Telegram rate limit
-                    if (
-                        "429" in error_text
-                        or "Too Many Requests"
-                        in error_text
-                    ):
-
-                        logging.warning(
-                            f"⏳ Rate limit | "
-                            f"User: {user_id}"
+                        await approve_join_request(
+                            chat_id,
+                            user_id
                         )
 
-                        await asyncio.sleep(
-                            3
+                        success = True
+
+                    except Exception as retry_error:
+
+                        logging.error(
+                            f"❌ Retry failed | "
+                            f"{user_id} | "
+                            f"{retry_error}"
                         )
 
-                        continue
+                else:
 
                     logging.error(
                         f"❌ Approval failed | "
-                        f"Chat: {chat_id} | "
-                        f"User: {user_id} | "
+                        f"{user_id} | "
                         f"{e}"
                     )
 
-                    break
-
-            if stopped:
-                break
-
             # =================================================
-            # DELETE SUCCESSFUL REQUEST
+            # RESULT
             # =================================================
 
             if success:
@@ -795,7 +751,7 @@ async def bulk_approve(
                 except Exception as e:
 
                     logging.error(
-                        f"Mongo request delete failed | "
+                        f"Mongo delete failed | "
                         f"{user_id} | {e}"
                     )
 
@@ -803,12 +759,16 @@ async def bulk_approve(
 
                 failed += 1
 
+            # =================================================
+            # NO ARTIFICIAL DELAY
+            # =================================================
+
             await asyncio.sleep(
-                0.10
+                0.02
             )
 
             # =================================================
-            # PROGRESS UPDATE
+            # PROGRESS EVERY 50
             # =================================================
 
             processed = (
@@ -817,7 +777,7 @@ async def bulk_approve(
             )
 
             if (
-                processed % 10 == 0
+                processed % 50 == 0
                 or processed == total_found
             ):
 
@@ -847,21 +807,19 @@ async def bulk_approve(
                 failed
             )
 
-            if progress:
+            try:
 
-                try:
+                await progress.edit_text(
+                    "🛑 **APPROVAL STOPPED**\n\n"
+                    f"🎯 Target: `{amount:,}`\n"
+                    f"📋 Found: `{total_found:,}`\n"
+                    f"⚡ Processed: `{processed:,}`\n"
+                    f"✅ Approved: `{approved:,}`\n"
+                    f"❌ Failed: `{failed:,}`"
+                )
 
-                    await progress.edit_text(
-                        "🛑 **APPROVAL STOPPED**\n\n"
-                        f"🎯 Target: `{amount:,}`\n"
-                        f"📋 Found: `{total_found:,}`\n"
-                        f"⚡ Processed: `{processed:,}`\n"
-                        f"✅ Approved: `{approved:,}`\n"
-                        f"❌ Failed: `{failed:,}`"
-                    )
-
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
             return
 
@@ -874,21 +832,19 @@ async def bulk_approve(
             failed
         )
 
-        if progress:
+        try:
 
-            try:
+            await progress.edit_text(
+                "✅ **APPROVAL COMPLETED**\n\n"
+                f"🎯 Requested: `{amount:,}`\n"
+                f"📋 Found: `{total_found:,}`\n\n"
+                f"⚡ Processed: `{processed:,}`\n"
+                f"✅ Approved: `{approved:,}`\n"
+                f"❌ Failed: `{failed:,}`"
+            )
 
-                await progress.edit_text(
-                    "✅ **APPROVAL COMPLETED**\n\n"
-                    f"🎯 Requested: `{amount:,}`\n"
-                    f"📋 Found: `{total_found:,}`\n\n"
-                    f"⚡ Processed: `{processed:,}`\n"
-                    f"✅ Approved: `{approved:,}`\n"
-                    f"❌ Failed: `{failed:,}`"
-                )
-
-            except Exception:
-                pass
+        except Exception:
+            pass
 
     except asyncio.CancelledError:
 
@@ -908,7 +864,7 @@ async def bulk_approve(
         try:
 
             await message.reply_text(
-                "❌ **Bulk Approval Error**\n\n"
+                f"❌ **Bulk Approval Error**\n\n"
                 f"`{e}`"
             )
 
@@ -939,14 +895,13 @@ async def addmember_command(
     if not message.from_user:
         return
 
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
     await register_group(
         message.chat
     )
 
-    chat_id = message.chat.id
-    user_id = message.from_user.id
-
-    # Admin
     if not await is_admin(
         client,
         chat_id,
@@ -957,7 +912,6 @@ async def addmember_command(
             "❌ **Admin only.**"
         )
 
-    # Usage
     if len(message.command) < 2:
 
         return await message.reply_text(
@@ -968,7 +922,6 @@ async def addmember_command(
             "`/addmember 10k`"
         )
 
-    # Parse
     amount = parse_amount(
         message.command[1]
     )
@@ -976,15 +929,9 @@ async def addmember_command(
     if amount is None:
 
         return await message.reply_text(
-            "❌ **Invalid Number**\n\n"
-            "Examples:\n"
-            "`10`\n"
-            "`100`\n"
-            "`1k`\n"
-            "`10k`"
+            "❌ **Invalid Number**"
         )
 
-    # Already running
     if chat_id in running_tasks:
 
         return await message.reply_text(
@@ -1009,8 +956,7 @@ async def addmember_command(
     await message.reply_text(
         "🚀 **APPROVAL STARTED**\n\n"
         f"🎯 Target: `{amount:,}`\n"
-        "📋 Saved pending requests will be processed.\n\n"
-        "🛑 Use `/stop` to stop."
+        "⚡ Processing..."
     )
 
 
@@ -1030,12 +976,12 @@ async def stop_command(
     if not message.from_user:
         return
 
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
     await register_group(
         message.chat
     )
-
-    chat_id = message.chat.id
-    user_id = message.from_user.id
 
     if not await is_admin(
         client,
@@ -1057,13 +1003,11 @@ async def stop_command(
             "ℹ️ **No approval process is running.**"
         )
 
-    # Remove task marker first
     running_tasks.pop(
         chat_id,
         None
     )
 
-    # Cancel
     task.cancel()
 
     await message.reply_text(
@@ -1087,12 +1031,12 @@ async def remove_saved_requests(
     if not message.from_user:
         return
 
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
     await register_group(
         message.chat
     )
-
-    chat_id = message.chat.id
-    user_id = message.from_user.id
 
     if not await is_admin(
         client,
@@ -1153,10 +1097,6 @@ async def remove_saved_requests(
             )
 
             removed += 1
-
-            await asyncio.sleep(
-                0.08
-            )
 
         except Exception as e:
 
@@ -1273,16 +1213,7 @@ async def broadcast_command(
         return await message.reply_text(
             "📢 **Broadcast Usage**\n\n"
             "Kisi message ko reply karke:\n\n"
-            "`/broadcast`\n\n"
-            "send karo.\n\n"
-            "✅ Text\n"
-            "✅ Photo\n"
-            "✅ Video\n"
-            "✅ Voice\n"
-            "✅ Audio\n"
-            "✅ Document\n"
-            "✅ Sticker\n"
-            "✅ Animation"
+            "`/broadcast`"
         )
 
     status = await message.reply_text(
@@ -1331,13 +1262,8 @@ async def status_command(
 
     except Exception as e:
 
-        logging.exception(
-            f"Status error: {e}"
-        )
-
         await message.reply_text(
-            f"❌ **Status Error**\n\n"
-            f"`{e}`"
+            f"❌ **Status Error**\n\n`{e}`"
         )
 
 
@@ -1408,13 +1334,8 @@ async def groups_command(
 
     except Exception as e:
 
-        logging.exception(
-            f"Groups error: {e}"
-        )
-
         await message.reply_text(
-            f"❌ **Error**\n\n"
-            f"`{e}`"
+            f"❌ **Error**\n\n`{e}`"
         )
 
 
@@ -1471,17 +1392,15 @@ async def start_command(
     if not message.from_user:
         return
 
-    user = message.from_user
-
     try:
 
         await save_user(
-            user.id
+            message.from_user.id
         )
 
         logging.info(
             f"👤 USER SAVED FROM START | "
-            f"{user.id}"
+            f"{message.from_user.id}"
         )
 
     except Exception as e:
