@@ -1,9 +1,12 @@
 import os
+
 from motor.motor_asyncio import AsyncIOMotorClient
+
 
 MONGO_URL = os.environ["MONGO_URL"]
 
 mongo = AsyncIOMotorClient(MONGO_URL)
+
 db = mongo["join_request_bot"]
 
 settings_collection = db["settings"]
@@ -18,6 +21,7 @@ groups_collection = db["groups"]
 # =========================================================
 
 async def get_auto_approve(chat_id: int) -> bool:
+
     data = await settings_collection.find_one(
         {"chat_id": chat_id}
     )
@@ -25,10 +29,16 @@ async def get_auto_approve(chat_id: int) -> bool:
     if not data:
         return False
 
-    return bool(data.get("auto_approve", False))
+    return bool(
+        data.get("auto_approve", False)
+    )
 
 
-async def set_auto_approve(chat_id: int, status: bool):
+async def set_auto_approve(
+    chat_id: int,
+    status: bool
+):
+
     await settings_collection.update_one(
         {"chat_id": chat_id},
         {
@@ -42,10 +52,11 @@ async def set_auto_approve(chat_id: int, status: bool):
 
 
 # =========================================================
-# ADS
+# ADVERTISEMENT
 # =========================================================
 
 async def get_ad():
+
     data = await ads_collection.find_one(
         {"_id": "global_ad"}
     )
@@ -57,14 +68,20 @@ async def get_ad():
 
 
 async def save_ad(text: str):
+
     await ads_collection.update_one(
         {"_id": "global_ad"},
-        {"$set": {"text": text}},
+        {
+            "$set": {
+                "text": text
+            }
+        },
         upsert=True
     )
 
 
 async def delete_ad():
+
     await ads_collection.delete_one(
         {"_id": "global_ad"}
     )
@@ -80,6 +97,7 @@ async def save_user(
     name: str = "",
     username: str = ""
 ):
+
     update = {
         "user_id": user_id,
         "name": name,
@@ -96,7 +114,10 @@ async def save_user(
     )
 
 
-async def mark_user_started(user_id: int):
+async def mark_user_started(
+    user_id: int
+):
+
     await users_collection.update_one(
         {"user_id": user_id},
         {
@@ -109,7 +130,10 @@ async def mark_user_started(user_id: int):
     )
 
 
-async def get_all_users(started_only=False):
+async def get_all_users(
+    started_only: bool = False
+):
+
     query = {}
 
     if started_only:
@@ -117,23 +141,33 @@ async def get_all_users(started_only=False):
 
     cursor = users_collection.find(
         query,
-        {"_id": 0, "user_id": 1}
+        {
+            "_id": 0,
+            "user_id": 1
+        }
     )
 
-    return await cursor.to_list(length=None)
+    return await cursor.to_list(
+        length=None
+    )
 
 
-async def delete_user(user_id: int):
+async def delete_user(
+    user_id: int
+):
+
     await users_collection.delete_one(
         {"user_id": user_id}
     )
 
 
 async def get_total_users():
+
     return await users_collection.count_documents({})
 
 
 async def get_started_users():
+
     return await users_collection.count_documents(
         {"started": True}
     )
@@ -149,6 +183,7 @@ async def save_group(
     chat_type: str = "group",
     username: str = ""
 ):
+
     await groups_collection.update_one(
         {"chat_id": chat_id},
         {
@@ -163,17 +198,24 @@ async def save_group(
     )
 
 
-async def delete_group(chat_id: int):
+async def delete_group(
+    chat_id: int
+):
+
     await groups_collection.delete_one(
         {"chat_id": chat_id}
     )
 
 
 async def get_all_groups():
+
     cursor = groups_collection.find(
         {
             "type": {
-                "$in": ["group", "supergroup"]
+                "$in": [
+                    "group",
+                    "supergroup"
+                ]
             }
         },
         {
@@ -185,10 +227,13 @@ async def get_all_groups():
         }
     )
 
-    return await cursor.to_list(length=None)
+    return await cursor.to_list(
+        length=None
+    )
 
 
 async def get_all_channels():
+
     cursor = groups_collection.find(
         {"type": "channel"},
         {
@@ -200,10 +245,13 @@ async def get_all_channels():
         }
     )
 
-    return await cursor.to_list(length=None)
+    return await cursor.to_list(
+        length=None
+    )
 
 
 async def get_all_chats():
+
     cursor = groups_collection.find(
         {},
         {
@@ -215,26 +263,36 @@ async def get_all_chats():
         }
     )
 
-    return await cursor.to_list(length=None)
+    return await cursor.to_list(
+        length=None
+    )
 
 
 async def get_total_groups():
+
     return await groups_collection.count_documents(
         {
             "type": {
-                "$in": ["group", "supergroup"]
+                "$in": [
+                    "group",
+                    "supergroup"
+                ]
             }
         }
     )
 
 
 async def get_total_channels():
+
     return await groups_collection.count_documents(
         {"type": "channel"}
     )
 
 
-async def get_chat_info(chat_id: int):
+async def get_chat_info(
+    chat_id: int
+):
+
     return await groups_collection.find_one(
         {"chat_id": chat_id},
         {"_id": 0}
@@ -251,6 +309,7 @@ async def save_request(
     name: str = "",
     username: str = ""
 ):
+
     await requests_collection.update_one(
         {
             "chat_id": chat_id,
@@ -272,6 +331,7 @@ async def get_pending_requests(
     chat_id: int,
     limit: int = 100
 ):
+
     cursor = requests_collection.find(
         {"chat_id": chat_id}
     ).limit(limit)
@@ -285,6 +345,7 @@ async def delete_request(
     chat_id: int,
     user_id: int
 ):
+
     await requests_collection.delete_one(
         {
             "chat_id": chat_id,
@@ -293,7 +354,10 @@ async def delete_request(
     )
 
 
-async def get_pending_count(chat_id: int):
+async def get_pending_count(
+    chat_id: int
+):
+
     return await requests_collection.count_documents(
         {"chat_id": chat_id}
     )
