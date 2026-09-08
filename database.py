@@ -31,7 +31,7 @@ async def get_auto_approve(chat_id: int) -> bool:
     if not data:
         return False
 
-    return data.get("auto_approve", False)
+    return bool(data.get("auto_approve", False))
 
 
 async def set_auto_approve(
@@ -93,8 +93,7 @@ async def delete_ad():
 
 async def save_request(
     chat_id: int,
-    user_id: int,
-    user_chat_id: int
+    user_id: int
 ):
 
     await requests_collection.update_one(
@@ -105,8 +104,7 @@ async def save_request(
         {
             "$set": {
                 "chat_id": chat_id,
-                "user_id": user_id,
-                "user_chat_id": user_chat_id
+                "user_id": user_id
             }
         },
         upsert=True
@@ -119,7 +117,9 @@ async def get_pending_requests(
 ):
 
     cursor = requests_collection.find(
-        {"chat_id": chat_id}
+        {
+            "chat_id": chat_id
+        }
     ).limit(limit)
 
     return await cursor.to_list(
@@ -145,9 +145,7 @@ async def clear_request(
     user_id: int
 ):
 
-    await requests_collection.delete_one(
-        {
-            "chat_id": chat_id,
-            "user_id": user_id
-        }
+    await delete_request(
+        chat_id,
+        user_id
     )
