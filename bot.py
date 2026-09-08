@@ -3,30 +3,50 @@ import sys
 import asyncio
 import logging
 
-from pyrogram import Client, filters
-from pyrogram.enums import ChatMemberStatus
-from pyrogram.types import ChatJoinRequest
-from pyrogram.errors import FloodWait
+from pyrogram import (
+    Client,
+    filters
+)
+
+from pyrogram.enums import (
+    ChatMemberStatus
+)
+
+from pyrogram.types import (
+    ChatJoinRequest,
+    ChatMemberUpdated
+)
+
+from pyrogram.errors import (
+    FloodWait
+)
 
 from database import (
     get_auto_approve,
     set_auto_approve,
+
     get_ad,
     save_ad,
     delete_ad,
+
     save_request,
     get_pending_requests,
     delete_request,
+
     save_user,
     get_all_users,
     delete_user,
+    get_total_users,
+
     save_group,
     get_all_groups,
-    get_total_users,
-    get_total_groups
+    get_total_groups,
+    delete_group
 )
 
-from broadcast import start_broadcast
+from broadcast import (
+    start_broadcast
+)
 
 
 # =========================================================
@@ -35,7 +55,11 @@ from broadcast import start_broadcast
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
+    format=(
+        "%(asctime)s - "
+        "%(levelname)s - "
+        "%(message)s"
+    )
 )
 
 
@@ -43,10 +67,21 @@ logging.basicConfig(
 # ENVIRONMENT
 # =========================================================
 
-API_ID = int(os.environ["API_ID"])
-API_HASH = os.environ["API_HASH"]
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-OWNER_ID = int(os.environ["OWNER_ID"])
+API_ID = int(
+    os.environ["API_ID"]
+)
+
+API_HASH = os.environ[
+    "API_HASH"
+]
+
+BOT_TOKEN = os.environ[
+    "BOT_TOKEN"
+]
+
+OWNER_ID = int(
+    os.environ["OWNER_ID"]
+)
 
 
 # =========================================================
@@ -60,6 +95,10 @@ app = Client(
     bot_token=BOT_TOKEN
 )
 
+
+# =========================================================
+# RUNNING TASKS
+# =========================================================
 
 running_tasks = {}
 
@@ -96,14 +135,49 @@ async def is_admin(
 
 
 # =========================================================
+# REGISTER GROUP
+# =========================================================
+
+async def register_group(
+    chat
+):
+
+    if not chat:
+        return
+
+    try:
+
+        await save_group(
+            chat.id,
+            chat.title or ""
+        )
+
+        logging.info(
+            f"👥 GROUP SAVED | "
+            f"{chat.title} | {chat.id}"
+        )
+
+    except Exception as e:
+
+        logging.error(
+            f"Group save failed: {e}"
+        )
+
+
+# =========================================================
 # NUMBER PARSER
 # =========================================================
 
-def parse_amount(value):
+def parse_amount(
+    value
+):
 
-    value = value.lower()
-    value = value.replace(",", "")
-    value = value.strip()
+    value = (
+        value
+        .lower()
+        .replace(",", "")
+        .strip()
+    )
 
     try:
 
@@ -125,11 +199,108 @@ def parse_amount(value):
 
 
 # =========================================================
+# BOT ADDED / REMOVED FROM GROUP
+# =========================================================
+
+@app.on_chat_member_updated()
+async def chat_member_updated(
+    client,
+    update: ChatMemberUpdated
+):
+
+    try:
+
+        if not update.chat:
+            return
+
+        chat = update.chat
+
+        # Only groups/supergroups
+        if chat.type not in (
+            "group",
+            "supergroup"
+        ):
+
+            return
+
+        new_member = update.new_chat_member
+        old_member = update.old_chat_member
+
+        if not new_member:
+            return
+
+        # Is this update about our bot?
+        if not new_member.user:
+            return
+
+        if not new_member.user.is_self:
+            return
+
+
+        new_status = new_member.status
+        old_status = (
+            old_member.status
+            if old_member
+            else None
+        )
+
+
+        # =================================================
+        # BOT ADDED / ADMIN
+        # =================================================
+
+        active_statuses = (
+            ChatMemberStatus.MEMBER,
+            ChatMemberStatus.ADMINISTRATOR,
+            ChatMemberStatus.OWNER
+        )
+
+        if new_status in active_statuses:
+
+            await register_group(
+                chat
+            )
+
+            logging.info(
+                f"🤖 BOT ACTIVE IN GROUP | "
+                f"{chat.title}"
+            )
+
+            return
+
+
+        # =================================================
+        # BOT LEFT / KICKED
+        # =================================================
+
+        if new_status in (
+            ChatMemberStatus.LEFT,
+            ChatMemberStatus.BANNED
+        ):
+
+            await delete_group(
+                chat.id
+            )
+
+            logging.info(
+                f"🚪 BOT REMOVED FROM GROUP | "
+                f"{chat.title}"
+            )
+
+    except Exception as e:
+
+        logging.exception(
+            f"Chat member update error: {e}"
+        )
+
+
+# =========================================================
 # /approve
 # =========================================================
 
 @app.on_message(
-    filters.command("approve") & filters.group
+    filters.command("approve")
+    & filters.group
 )
 async def approve_command(
     client,
@@ -139,8 +310,13 @@ async def approve_command(
     if not message.from_user:
         return
 
+    await register_group(
+        message.chat
+    )
+
     chat_id = message.chat.id
     user_id = message.from_user.id
+
 
     if not await is_admin(
         client,
@@ -152,16 +328,19 @@ async def approve_command(
             "❌ Admin only."
         )
 
+
     current = await get_auto_approve(
         chat_id
     )
 
     new_status = not current
 
+
     await set_auto_approve(
         chat_id,
         new_status
     )
+
 
     if new_status:
 
@@ -193,6 +372,7 @@ async def join_request(
     chat_id = request.chat.id
     user = request.from_user
 
+
     if not user:
 
         logging.error(
@@ -201,10 +381,20 @@ async def join_request(
 
         return
 
+
     logging.info(
         f"📥 NEW JOIN REQUEST | "
         f"User: {user.id} | "
         f"Chat: {chat_id}"
+    )
+
+
+    # =====================================================
+    # SAVE GROUP
+    # =====================================================
+
+    await register_group(
+        request.chat
     )
 
 
@@ -218,33 +408,20 @@ async def join_request(
             user.id
         )
 
-    except Exception as e:
-
-        logging.error(
-            f"Save user failed: {e}"
-        )
-
-
-    # =====================================================
-    # SAVE GROUP
-    # =====================================================
-
-    try:
-
-        await save_group(
-            chat_id,
-            request.chat.title or ""
+        logging.info(
+            f"👤 USER SAVED | "
+            f"{user.id}"
         )
 
     except Exception as e:
 
         logging.error(
-            f"Save group failed: {e}"
+            f"User save failed: {e}"
         )
 
 
     # =====================================================
-    # SAVE JOIN REQUEST
+    # SAVE REQUEST
     # =====================================================
 
     try:
@@ -256,13 +433,13 @@ async def join_request(
 
         logging.info(
             f"💾 REQUEST SAVED | "
-            f"User: {user.id}"
+            f"{user.id}"
         )
 
     except Exception as e:
 
         logging.exception(
-            f"❌ SAVE REQUEST FAILED: {e}"
+            f"❌ REQUEST SAVE FAILED: {e}"
         )
 
 
@@ -279,24 +456,25 @@ async def join_request(
     except Exception as e:
 
         logging.error(
-            f"Get ad failed: {e}"
+            f"Ad loading failed: {e}"
         )
 
 
     # =====================================================
-    # WELCOME MESSAGE
+    # WELCOME
     # =====================================================
 
     welcome = (
         "👋 **Hello!**\n\n"
         "🤖 **Join Request Manager Bot**\n\n"
         "I help group administrators manage "
-        "join requests and automatically approve "
-        "new members when Auto Approve is enabled.\n\n"
-        "✅ Manage Join Requests\n"
+        "join requests and automate approvals.\n\n"
+        "✅ Join Request Management\n"
         "⚡ Auto Approval\n"
-        "👥 Bulk Approval Support\n\n"
+        "👥 Bulk Approval\n"
+        "📢 Advertisement System\n\n"
     )
+
 
     if ad:
 
@@ -304,6 +482,7 @@ async def join_request(
             "📢 **Advertisement**\n\n"
             f"{ad}\n\n"
         )
+
 
     welcome += (
         "✨ Thank you for requesting to join!"
@@ -323,14 +502,14 @@ async def join_request(
 
         logging.info(
             f"📩 WELCOME/AD SENT | "
-            f"User: {user.id}"
+            f"{user.id}"
         )
 
     except Exception as e:
 
         logging.warning(
             f"⚠️ PRIVATE MESSAGE FAILED | "
-            f"User: {user.id} | {e}"
+            f"{user.id} | {e}"
         )
 
 
@@ -348,8 +527,9 @@ async def join_request(
 
             logging.info(
                 f"⚡ AUTO APPROVING | "
-                f"User: {user.id}"
+                f"{user.id}"
             )
+
 
             try:
 
@@ -369,14 +549,16 @@ async def join_request(
                     user.id
                 )
 
+
             await delete_request(
                 chat_id,
                 user.id
             )
 
+
             logging.info(
                 f"✅ AUTO APPROVED | "
-                f"User: {user.id}"
+                f"{user.id}"
             )
 
     except Exception as e:
@@ -407,6 +589,7 @@ async def bulk_approve(
             amount
         )
 
+
         if not requests:
 
             await message.reply_text(
@@ -427,20 +610,24 @@ async def bulk_approve(
 
                 approved += 1
 
+
                 await delete_request(
                     chat_id,
                     request["user_id"]
                 )
 
+
                 await asyncio.sleep(
                     0.08
                 )
+
 
             except FloodWait as e:
 
                 await asyncio.sleep(
                     e.value
                 )
+
 
             except Exception as e:
 
@@ -492,7 +679,8 @@ async def bulk_approve(
 # =========================================================
 
 @app.on_message(
-    filters.command("addmember") & filters.group
+    filters.command("addmember")
+    & filters.group
 )
 async def addmember_command(
     client,
@@ -502,8 +690,15 @@ async def addmember_command(
     if not message.from_user:
         return
 
+
+    await register_group(
+        message.chat
+    )
+
+
     chat_id = message.chat.id
     user_id = message.from_user.id
+
 
     if not await is_admin(
         client,
@@ -556,7 +751,10 @@ async def addmember_command(
         )
     )
 
-    running_tasks[chat_id] = task
+
+    running_tasks[
+        chat_id
+    ] = task
 
 
     await message.reply_text(
@@ -572,7 +770,8 @@ async def addmember_command(
 # =========================================================
 
 @app.on_message(
-    filters.command("stop") & filters.group
+    filters.command("stop")
+    & filters.group
 )
 async def stop_command(
     client,
@@ -582,8 +781,15 @@ async def stop_command(
     if not message.from_user:
         return
 
+
+    await register_group(
+        message.chat
+    )
+
+
     chat_id = message.chat.id
     user_id = message.from_user.id
+
 
     if not await is_admin(
         client,
@@ -610,6 +816,7 @@ async def stop_command(
 
     task.cancel()
 
+
     await message.reply_text(
         "🛑 **Stopping approval process...**"
     )
@@ -620,7 +827,8 @@ async def stop_command(
 # =========================================================
 
 @app.on_message(
-    filters.command("remove") & filters.group
+    filters.command("remove")
+    & filters.group
 )
 async def remove_saved_requests(
     client,
@@ -630,8 +838,15 @@ async def remove_saved_requests(
     if not message.from_user:
         return
 
+
+    await register_group(
+        message.chat
+    )
+
+
     chat_id = message.chat.id
     user_id = message.from_user.id
+
 
     if not await is_admin(
         client,
@@ -683,22 +898,27 @@ async def remove_saved_requests(
                 request["user_id"]
             )
 
+
             await delete_request(
                 chat_id,
                 request["user_id"]
             )
 
+
             removed += 1
+
 
             await asyncio.sleep(
                 0.08
             )
+
 
         except FloodWait as e:
 
             await asyncio.sleep(
                 e.value
             )
+
 
         except Exception as e:
 
@@ -721,7 +941,8 @@ async def remove_saved_requests(
 # =========================================================
 
 @app.on_message(
-    filters.command("setad") & filters.private
+    filters.command("setad")
+    & filters.private
 )
 async def set_ad_command(
     client,
@@ -768,7 +989,8 @@ async def set_ad_command(
 # =========================================================
 
 @app.on_message(
-    filters.command("delad") & filters.private
+    filters.command("delad")
+    & filters.private
 )
 async def delete_ad_command(
     client,
@@ -799,7 +1021,8 @@ async def delete_ad_command(
 # =========================================================
 
 @app.on_message(
-    filters.command("broadcast") & filters.private
+    filters.command("broadcast")
+    & filters.private
 )
 async def broadcast_command(
     client,
@@ -821,11 +1044,17 @@ async def broadcast_command(
 
         return await message.reply_text(
             "📢 **Broadcast Usage**\n\n"
-            "Kisi bhi message ko reply karke:\n"
+            "Kisi message ko reply karke:\n\n"
             "`/broadcast`\n\n"
-            "bhejo.\n\n"
-            "Text, photo, video, voice, audio, "
-            "document, sticker aur animation supported."
+            "send karo.\n\n"
+            "✅ Text\n"
+            "✅ Photo\n"
+            "✅ Video\n"
+            "✅ Voice\n"
+            "✅ Audio\n"
+            "✅ Document\n"
+            "✅ Sticker\n"
+            "✅ Animation"
         )
 
 
@@ -834,15 +1063,11 @@ async def broadcast_command(
     )
 
 
-    task = asyncio.create_task(
-        start_broadcast(
-            client,
-            message.reply_to_message,
-            status
-        )
+    await start_broadcast(
+        client,
+        message.reply_to_message,
+        status
     )
-
-    await task
 
 
 # =========================================================
@@ -850,7 +1075,8 @@ async def broadcast_command(
 # =========================================================
 
 @app.on_message(
-    filters.command("status") & filters.private
+    filters.command("status")
+    & filters.private
 )
 async def status_command(
     client,
@@ -871,7 +1097,9 @@ async def status_command(
     try:
 
         total_users = await get_total_users()
+
         total_groups = await get_total_groups()
+
 
         await message.reply_text(
             "📊 **Bot Statistics**\n\n"
@@ -879,14 +1107,16 @@ async def status_command(
             f"👥 Total Groups: `{total_groups:,}`"
         )
 
+
     except Exception as e:
 
         logging.exception(
             f"Status error: {e}"
         )
 
+
         await message.reply_text(
-            f"❌ Status error:\n`{e}`"
+            f"❌ Status Error:\n`{e}`"
         )
 
 
@@ -895,7 +1125,8 @@ async def status_command(
 # =========================================================
 
 @app.on_message(
-    filters.command("groups") & filters.private
+    filters.command("groups")
+    & filters.private
 )
 async def groups_command(
     client,
@@ -917,6 +1148,7 @@ async def groups_command(
 
         groups = await get_all_groups()
 
+
         if not groups:
 
             return await message.reply_text(
@@ -924,7 +1156,10 @@ async def groups_command(
             )
 
 
-        text = "👥 **Bot Groups**\n\n"
+        text = (
+            "👥 **Bot Groups**\n\n"
+        )
+
 
         for index, group in enumerate(
             groups,
@@ -939,6 +1174,7 @@ async def groups_command(
             chat_id = group.get(
                 "chat_id"
             )
+
 
             text += (
                 f"{index}. **{title}**\n"
@@ -959,11 +1195,13 @@ async def groups_command(
             text
         )
 
+
     except Exception as e:
 
         logging.exception(
             f"Groups error: {e}"
         )
+
 
         await message.reply_text(
             f"❌ Error:\n`{e}`"
@@ -975,7 +1213,8 @@ async def groups_command(
 # =========================================================
 
 @app.on_message(
-    filters.command("restart") & filters.private
+    filters.command("restart")
+    & filters.private
 )
 async def restart_command(
     client,
@@ -1016,19 +1255,48 @@ async def restart_command(
 
 @app.on_message(
     filters.command("start")
+    & filters.private
 )
 async def start_command(
     client,
     message
 ):
 
+    if not message.from_user:
+        return
+
+
+    user = message.from_user
+
+
+    try:
+
+        await save_user(
+            user.id
+        )
+
+        logging.info(
+            f"👤 USER SAVED FROM START | "
+            f"{user.id}"
+        )
+
+    except Exception as e:
+
+        logging.error(
+            f"Start user save failed: {e}"
+        )
+
+
     await message.reply_text(
         "👋 **Hello!**\n\n"
-        "🤖 I am a Join Request Manager Bot.\n\n"
+        "🤖 **Join Request Manager Bot**\n\n"
         "I help group administrators manage "
         "join requests and automate approvals.\n\n"
-        "Add me to your group as an administrator "
-        "with permission to manage join requests."
+        "✅ Join Request Management\n"
+        "⚡ Auto Approval\n"
+        "👥 Bulk Approval\n"
+        "📢 Advertisement System\n\n"
+        "✨ Your account has been registered."
     )
 
 
