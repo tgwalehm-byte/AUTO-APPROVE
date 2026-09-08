@@ -1,12 +1,10 @@
 import os
 from motor.motor_asyncio import AsyncIOMotorClient
 
-
 MONGO_URL = os.environ["MONGO_URL"]
 
 mongo = AsyncIOMotorClient(MONGO_URL)
 db = mongo["join_request_bot"]
-
 
 settings_collection = db["settings"]
 ads_collection = db["ads"]
@@ -61,11 +59,7 @@ async def get_ad():
 async def save_ad(text: str):
     await ads_collection.update_one(
         {"_id": "global_ad"},
-        {
-            "$set": {
-                "text": text
-            }
-        },
+        {"$set": {"text": text}},
         upsert=True
     )
 
@@ -116,7 +110,6 @@ async def mark_user_started(user_id: int):
 
 
 async def get_all_users(started_only=False):
-
     query = {}
 
     if started_only:
@@ -124,10 +117,7 @@ async def get_all_users(started_only=False):
 
     cursor = users_collection.find(
         query,
-        {
-            "_id": 0,
-            "user_id": 1
-        }
+        {"_id": 0, "user_id": 1}
     )
 
     return await cursor.to_list(length=None)
@@ -181,7 +171,11 @@ async def delete_group(chat_id: int):
 
 async def get_all_groups():
     cursor = groups_collection.find(
-        {"type": {"$in": ["group", "supergroup"]}},
+        {
+            "type": {
+                "$in": ["group", "supergroup"]
+            }
+        },
         {
             "_id": 0,
             "chat_id": 1,
@@ -226,7 +220,11 @@ async def get_all_chats():
 
 async def get_total_groups():
     return await groups_collection.count_documents(
-        {"type": {"$in": ["group", "supergroup"]}}
+        {
+            "type": {
+                "$in": ["group", "supergroup"]
+            }
+        }
     )
 
 
@@ -278,7 +276,9 @@ async def get_pending_requests(
         {"chat_id": chat_id}
     ).limit(limit)
 
-    return await cursor.to_list(length=limit)
+    return await cursor.to_list(
+        length=limit
+    )
 
 
 async def delete_request(
@@ -290,12 +290,6 @@ async def delete_request(
             "chat_id": chat_id,
             "user_id": user_id
         }
-    )
-
-
-async def delete_all_requests(chat_id: int):
-    await requests_collection.delete_many(
-        {"chat_id": chat_id}
     )
 
 
