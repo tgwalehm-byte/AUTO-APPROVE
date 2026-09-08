@@ -40,7 +40,6 @@ from database import (
     save_request,
     get_pending_requests,
     delete_request,
-    delete_all_requests,
     get_pending_count
 )
 
@@ -51,17 +50,14 @@ from database import (
 
 logging.basicConfig(
     level=logging.INFO,
-    format=(
-        "[%(asctime)s - %(levelname)s] "
-        "- %(message)s"
-    )
+    format="[%(asctime)s - %(levelname)s] - %(message)s"
 )
 
 LOGGER = logging.getLogger(__name__)
 
 
 # =========================================================
-# ENV
+# CONFIG
 # =========================================================
 
 API_ID = int(os.environ["API_ID"])
@@ -83,7 +79,7 @@ app = Client(
 
 
 # =========================================================
-# GLOBALS
+# GLOBAL
 # =========================================================
 
 bot_username = None
@@ -92,9 +88,6 @@ bot_id = None
 http_session = None
 
 running_tasks = {}
-
-# user_id -> chat_id
-awaiting_add_count = {}
 
 
 # =========================================================
@@ -125,7 +118,10 @@ async def get_http_session():
     return http_session
 
 
-async def bot_api_call(method, data):
+async def bot_api_call(
+    method,
+    data
+):
 
     session = await get_http_session()
 
@@ -142,6 +138,7 @@ async def bot_api_call(method, data):
         result = await response.json()
 
         if not result.get("ok"):
+
             raise Exception(
                 result.get(
                     "description",
@@ -153,7 +150,7 @@ async def bot_api_call(method, data):
 
 
 # =========================================================
-# JOIN REQUEST API
+# TELEGRAM JOIN REQUEST API
 # =========================================================
 
 async def approve_join_request(
@@ -185,33 +182,27 @@ async def decline_join_request(
 
 
 # =========================================================
-# ADD GROUP LINK
+# LINKS
 # =========================================================
 
 def group_add_link():
 
     return (
-        f"https://t.me/"
-        f"{bot_username}"
+        f"https://t.me/{bot_username}"
         f"?startgroup&admin=invite_users"
     )
 
 
-# =========================================================
-# ADD CHANNEL LINK
-# =========================================================
-
 def channel_add_link():
 
     return (
-        f"https://t.me/"
-        f"{bot_username}"
+        f"https://t.me/{bot_username}"
         f"?startchannel&admin=invite_users"
     )
 
 
 # =========================================================
-# PRIVATE MAIN MENU
+# PRIVATE MAIN PANEL
 # =========================================================
 
 def main_keyboard():
@@ -259,8 +250,8 @@ async def send_main_menu(
 
     text = (
         "🤖 **JOIN REQUEST MANAGER**\n\n"
-        "Control your Groups & Channels "
-        "directly from this private bot.\n\n"
+        "Control your Telegram groups and "
+        "channels from this private bot.\n\n"
         f"👥 Groups: `{groups}`\n"
         f"📢 Channels: `{channels}`\n\n"
         "👇 Choose an option:"
@@ -283,7 +274,7 @@ async def send_main_menu(
 
 
 # =========================================================
-# CHAT ACCESS CHECK
+# PERMISSION CHECK
 # =========================================================
 
 async def can_control_chat(
@@ -292,7 +283,6 @@ async def can_control_chat(
     chat_id
 ):
 
-    # Owner has full access
     if user_id == OWNER_ID:
         return True
 
@@ -309,7 +299,6 @@ async def can_control_chat(
         ):
             return False
 
-        # User must have invite permission
         if (
             member.status
             == ChatMemberStatus.ADMINISTRATOR
@@ -323,7 +312,6 @@ async def can_control_chat(
             if not privileges.can_invite_users:
                 return False
 
-        # Check bot permission
         bot_member = await client.get_chat_member(
             chat_id,
             "me"
@@ -348,7 +336,7 @@ async def can_control_chat(
     except Exception as e:
 
         LOGGER.error(
-            f"Access check failed "
+            f"Permission error "
             f"{chat_id}: {e}"
         )
 
@@ -359,7 +347,7 @@ async def can_control_chat(
 # CHAT MENU
 # =========================================================
 
-async def chat_menu(
+async def show_chat_menu(
     client,
     callback,
     chat_id
@@ -378,7 +366,9 @@ async def chat_menu(
 
         return
 
-    info = await get_chat_info(chat_id)
+    info = await get_chat_info(
+        chat_id
+    )
 
     if not info:
 
@@ -399,24 +389,35 @@ async def chat_menu(
         "group"
     )
 
-    auto = await get_auto_approve(chat_id)
-
     pending = await get_pending_count(
         chat_id
     )
 
-    if chat_type == "channel":
-        icon = "📢"
-    else:
-        icon = "👥"
+    auto = await get_auto_approve(
+        chat_id
+    )
+
+    icon = (
+        "📢"
+        if chat_type == "channel"
+        else
+        "👥"
+    )
+
+    back = (
+        "channels"
+        if chat_type == "channel"
+        else
+        "groups"
+    )
 
     text = (
         f"{icon} **{title}**\n\n"
         f"🆔 `{chat_id}`\n"
-        f"📥 Pending Saved: `{pending}`\n"
+        f"📥 Pending: `{pending:,}`\n"
         f"⚡ Auto Approve: "
         f"`{'ON' if auto else 'OFF'}`\n\n"
-        "👇 Select an action:"
+        "👇 Choose an option:"
     )
 
     keyboard = InlineKeyboardMarkup(
@@ -424,41 +425,36 @@ async def chat_menu(
             [
                 InlineKeyboardButton(
                     (
-                        "🔴 Turn OFF Auto Approve"
+                        "🔴 AUTO APPROVE OFF"
                         if auto
                         else
-                        "🟢 Turn ON Auto Approve"
+                        "🟢 AUTO APPROVE ON"
                     ),
                     callback_data=f"toggle:{chat_id}"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    "👤 Approve Members",
-                    callback_data=f"approve:{chat_id}"
+                    "👤 APPROVE MEMBERS",
+                    callback_data=f"approve_menu:{chat_id}"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    "🗑 Remove Requests",
+                    "🗑 REMOVE REQUESTS",
                     callback_data=f"remove:{chat_id}"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    "⏹ Stop",
+                    "⏹ STOP",
                     callback_data=f"stop:{chat_id}"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    "🔙 Back",
-                    callback_data=(
-                        "channels"
-                        if chat_type == "channel"
-                        else
-                        "groups"
-                    )
+                    "🔙 BACK",
+                    callback_data=back
                 )
             ]
         ]
@@ -485,26 +481,25 @@ async def show_chat_list(
 
         chats = await get_all_channels()
 
-        title = "📢 YOUR CHANNELS"
-
-        back = "main"
+        title = "📢 **YOUR CHANNELS**"
 
     else:
 
         chats = await get_all_groups()
 
-        title = "👥 YOUR GROUPS"
-
-        back = "main"
+        title = "👥 **YOUR GROUPS**"
 
     buttons = []
 
     for chat in chats:
 
-        chat_id = chat.get("chat_id")
         name = chat.get(
             "title",
             "Unknown"
+        )
+
+        chat_id = chat.get(
+            "chat_id"
         )
 
         if len(name) > 35:
@@ -525,10 +520,10 @@ async def show_chat_list(
             [
                 InlineKeyboardButton(
                     (
-                        "📢 Add Channel"
+                        "📢 ADD CHANNEL"
                         if chat_type == "channel"
                         else
-                        "➕ Add Group"
+                        "➕ ADD GROUP"
                     ),
                     url=(
                         channel_add_link()
@@ -543,8 +538,8 @@ async def show_chat_list(
     buttons.append(
         [
             InlineKeyboardButton(
-                "🔙 Back",
-                callback_data=back
+                "🔙 BACK",
+                callback_data="main"
             )
         ]
     )
@@ -560,7 +555,7 @@ async def show_chat_list(
 
 
 # =========================================================
-# CALLBACK HANDLER
+# CALLBACKS
 # =========================================================
 
 @app.on_callback_query()
@@ -570,29 +565,22 @@ async def callback_handler(
 ):
 
     data = callback.data
-    user_id = callback.from_user.id
 
     try:
 
-        # -----------------------------
         # MAIN
-        # -----------------------------
-
         if data == "main":
 
             await send_main_menu(
                 client,
-                user_id,
+                callback.from_user.id,
                 callback.message
             )
 
             await callback.answer()
             return
 
-        # -----------------------------
         # GROUPS
-        # -----------------------------
-
         if data == "groups":
 
             await show_chat_list(
@@ -602,10 +590,7 @@ async def callback_handler(
 
             return
 
-        # -----------------------------
         # CHANNELS
-        # -----------------------------
-
         if data == "channels":
 
             await show_chat_list(
@@ -615,10 +600,7 @@ async def callback_handler(
 
             return
 
-        # -----------------------------
         # STATS
-        # -----------------------------
-
         if data == "stats":
 
             users = await get_total_users()
@@ -638,7 +620,7 @@ async def callback_handler(
                 [
                     [
                         InlineKeyboardButton(
-                            "🔙 Back",
+                            "🔙 BACK",
                             callback_data="main"
                         )
                     ]
@@ -651,20 +633,16 @@ async def callback_handler(
             )
 
             await callback.answer()
-
             return
 
-        # -----------------------------
         # CHAT
-        # -----------------------------
-
         if data.startswith("chat:"):
 
             chat_id = int(
                 data.split(":", 1)[1]
             )
 
-            await chat_menu(
+            await show_chat_menu(
                 client,
                 callback,
                 chat_id
@@ -672,10 +650,7 @@ async def callback_handler(
 
             return
 
-        # -----------------------------
-        # TOGGLE
-        # -----------------------------
-
+        # TOGGLE AUTO APPROVE
         if data.startswith("toggle:"):
 
             chat_id = int(
@@ -684,7 +659,7 @@ async def callback_handler(
 
             if not await can_control_chat(
                 client,
-                user_id,
+                callback.from_user.id,
                 chat_id
             ):
 
@@ -699,21 +674,24 @@ async def callback_handler(
                 chat_id
             )
 
+            new_status = not current
+
             await set_auto_approve(
                 chat_id,
-                not current
+                new_status
             )
 
             await callback.answer(
                 (
-                    "🟢 Auto Approve ON"
-                    if not current
+                    "🟢 AUTO APPROVE ON"
+                    if new_status
                     else
-                    "🔴 Auto Approve OFF"
-                )
+                    "🔴 AUTO APPROVE OFF"
+                ),
+                show_alert=True
             )
 
-            await chat_menu(
+            await show_chat_menu(
                 client,
                 callback,
                 chat_id
@@ -721,11 +699,8 @@ async def callback_handler(
 
             return
 
-        # -----------------------------
-        # APPROVE
-        # -----------------------------
-
-        if data.startswith("approve:"):
+        # APPROVE MENU
+        if data.startswith("approve_menu:"):
 
             chat_id = int(
                 data.split(":", 1)[1]
@@ -733,7 +708,7 @@ async def callback_handler(
 
             if not await can_control_chat(
                 client,
-                user_id,
+                callback.from_user.id,
                 chat_id
             ):
 
@@ -744,31 +719,22 @@ async def callback_handler(
 
                 return
 
-            awaiting_add_count[
-                user_id
-            ] = chat_id
-
             await callback.message.edit_text(
                 "👤 **APPROVE MEMBERS**\n\n"
-                "How many pending requests "
-                "do you want to approve?\n\n"
+                "Use this command in private chat:\n\n"
+                "`/approve CHAT_ID NUMBER`\n\n"
                 "Examples:\n"
-                "`10`\n"
-                "`100`\n"
-                "`1k`\n"
-                "`10k`\n\n"
-                "Send the number now.\n\n"
-                "Use `/cancel` to cancel."
+                "`/approve -1001234567890 100`\n"
+                "`/approve -1001234567890 1k`\n"
+                "`/approve -1001234567890 10k`\n"
+                "`/approve -1001234567890 1m`\n\n"
+                "♾️ No artificial user limit."
             )
 
             await callback.answer()
-
             return
 
-        # -----------------------------
         # REMOVE
-        # -----------------------------
-
         if data.startswith("remove:"):
 
             chat_id = int(
@@ -777,7 +743,7 @@ async def callback_handler(
 
             if not await can_control_chat(
                 client,
-                user_id,
+                callback.from_user.id,
                 chat_id
             ):
 
@@ -788,55 +754,18 @@ async def callback_handler(
 
                 return
 
-            requests = await get_pending_requests(
-                chat_id,
-                10000
+            await remove_pending(
+                client,
+                callback.from_user.id,
+                chat_id
             )
 
-            if not requests:
-
-                await callback.answer(
-                    "No saved pending requests.",
-                    show_alert=True
-                )
-
-                return
-
-            count = 0
-
-            for request in requests:
-
-                uid = request.get(
-                    "user_id"
-                )
-
-                try:
-
-                    await decline_join_request(
-                        chat_id,
-                        uid
-                    )
-
-                    await delete_request(
-                        chat_id,
-                        uid
-                    )
-
-                    count += 1
-
-                except Exception as e:
-
-                    LOGGER.error(
-                        f"Remove error "
-                        f"{uid}: {e}"
-                    )
-
             await callback.answer(
-                f"🗑 Removed {count} requests.",
+                "🗑 Remove completed.",
                 show_alert=True
             )
 
-            await chat_menu(
+            await show_chat_menu(
                 client,
                 callback,
                 chat_id
@@ -844,10 +773,7 @@ async def callback_handler(
 
             return
 
-        # -----------------------------
         # STOP
-        # -----------------------------
-
         if data.startswith("stop:"):
 
             chat_id = int(
@@ -875,7 +801,7 @@ async def callback_handler(
             else:
 
                 await callback.answer(
-                    "No running task.",
+                    "ℹ️ No approval running.",
                     show_alert=True
                 )
 
@@ -887,10 +813,15 @@ async def callback_handler(
             f"Callback error: {e}"
         )
 
-        await callback.answer(
-            "❌ Something went wrong.",
-            show_alert=True
-        )
+        try:
+
+            await callback.answer(
+                "❌ Something went wrong.",
+                show_alert=True
+            )
+
+        except Exception:
+            pass
 
 
 # =========================================================
@@ -915,9 +846,9 @@ async def join_request_handler(
         f"Chat: {chat_id}"
     )
 
-    # -----------------------------------------
-    # SAVE CHAT
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # CHAT TYPE
+    # -----------------------------------------------------
 
     chat_type = str(
         getattr(chat, "type", "group")
@@ -935,6 +866,10 @@ async def join_request_handler(
 
         db_type = "group"
 
+    # -----------------------------------------------------
+    # SAVE CHAT
+    # -----------------------------------------------------
+
     await save_group(
         chat_id=chat_id,
         title=chat.title or "",
@@ -942,9 +877,9 @@ async def join_request_handler(
         username=chat.username or ""
     )
 
-    # -----------------------------------------
-    # SAVE USER WITHOUT /START
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # SAVE USER BEFORE START
+    # -----------------------------------------------------
 
     await save_user(
         user_id=user_id,
@@ -953,9 +888,9 @@ async def join_request_handler(
         username=user.username or ""
     )
 
-    # -----------------------------------------
+    # -----------------------------------------------------
     # SAVE REQUEST
-    # -----------------------------------------
+    # -----------------------------------------------------
 
     await save_request(
         chat_id=chat_id,
@@ -964,27 +899,23 @@ async def join_request_handler(
         username=user.username or ""
     )
 
-    # -----------------------------------------
-    # GET AD
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # AD
+    # -----------------------------------------------------
 
     ad = await get_ad()
 
-    # -----------------------------------------
-    # USER MENTION
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # VERIFICATION MESSAGE
+    # -----------------------------------------------------
 
     mention = user.mention
 
-    # -----------------------------------------
-    # MESSAGE
-    # -----------------------------------------
-
     text = (
         f"👋 **Hello {mention}!**\n\n"
-        "To join the chat, confirm that you "
-        "are not a robot by tapping the "
-        "button below. ⬇️\n\n"
+        "To join the chat, confirm that "
+        "you are not a robot by tapping "
+        "the button below. ⬇️\n\n"
     )
 
     if ad:
@@ -998,10 +929,6 @@ async def join_request_handler(
         "🤖 **I'm not a Robot**\n"
         "Tap the button below to continue."
     )
-
-    # -----------------------------------------
-    # HUMAN BUTTON
-    # -----------------------------------------
 
     keyboard = InlineKeyboardMarkup(
         [
@@ -1018,9 +945,9 @@ async def join_request_handler(
         ]
     )
 
-    # -----------------------------------------
-    # SEND DM
-    # -----------------------------------------
+    # -----------------------------------------------------
+    # SEND PRIVATE MESSAGE
+    # -----------------------------------------------------
 
     try:
 
@@ -1041,9 +968,9 @@ async def join_request_handler(
             f"DM failed {user_id}: {e}"
         )
 
-    # -----------------------------------------
+    # -----------------------------------------------------
     # AUTO APPROVE
-    # -----------------------------------------
+    # -----------------------------------------------------
 
     auto = await get_auto_approve(
         chat_id
@@ -1064,7 +991,7 @@ async def join_request_handler(
             )
 
             LOGGER.info(
-                f"✅ Auto approved | "
+                f"✅ AUTO APPROVED | "
                 f"{user_id}"
             )
 
@@ -1077,7 +1004,7 @@ async def join_request_handler(
 
 
 # =========================================================
-# BOT ADDED / REMOVED FROM GROUP / CHANNEL
+# BOT ADDED TO GROUP / CHANNEL
 # =========================================================
 
 @app.on_chat_member_updated()
@@ -1096,17 +1023,15 @@ async def bot_chat_member_update(
         if not new_member.user:
             return
 
-        # Only react to our own bot status
         if bot_id != new_member.user.id:
             return
 
         chat = update.chat
-
         status = new_member.status
 
-        # -----------------------------------------
-        # BOT IS ADMIN
-        # -----------------------------------------
+        # -------------------------------------------------
+        # BOT ADMIN
+        # -------------------------------------------------
 
         if status in (
             ChatMemberStatus.ADMINISTRATOR,
@@ -1141,18 +1066,17 @@ async def bot_chat_member_update(
             )
 
             LOGGER.info(
-                f"✅ CHAT ADDED | "
+                f"✅ CHAT SAVED | "
                 f"{chat.title} | "
                 f"{chat.id} | "
                 f"{db_type}"
             )
 
-            # Notify owner
             try:
 
                 await client.send_message(
                     OWNER_ID,
-                    "✅ **New Chat Added**\n\n"
+                    "✅ **CHAT ADDED**\n\n"
                     f"📌 {chat.title}\n"
                     f"🆔 `{chat.id}`\n"
                     f"📂 Type: `{db_type}`"
@@ -1161,9 +1085,9 @@ async def bot_chat_member_update(
             except Exception:
                 pass
 
-        # -----------------------------------------
+        # -------------------------------------------------
         # BOT LEFT
-        # -----------------------------------------
+        # -------------------------------------------------
 
         elif status in (
             ChatMemberStatus.LEFT,
@@ -1204,15 +1128,15 @@ async def start_handler(
     if not user:
         return
 
-    await mark_user_started(
-        user.id
-    )
-
     await save_user(
         user_id=user.id,
         started=True,
         name=user.first_name or "",
         username=user.username or ""
+    )
+
+    await mark_user_started(
+        user.id
     )
 
     mention = user.mention
@@ -1256,7 +1180,7 @@ async def start_handler(
 
 
 # =========================================================
-# PRIVATE PANEL
+# PANEL
 # =========================================================
 
 @app.on_message(
@@ -1283,81 +1207,79 @@ async def panel_handler(
 
 
 # =========================================================
-# CANCEL
+# NUMBER PARSER
 # =========================================================
 
-@app.on_message(
-    filters.command("cancel")
-    & filters.private
-)
-async def cancel_handler(
-    client,
-    message
-):
+def parse_number(value):
 
-    awaiting_add_count.pop(
-        message.from_user.id,
-        None
-    )
+    value = value.lower().strip()
 
-    await message.reply_text(
-        "❌ Cancelled."
-    )
+    try:
+
+        if value.endswith("k"):
+
+            return int(
+                float(value[:-1]) * 1000
+            )
+
+        if value.endswith("m"):
+
+            return int(
+                float(value[:-1]) * 1000000
+            )
+
+        return int(value)
+
+    except Exception:
+
+        return None
 
 
 # =========================================================
-# APPROVE WORKER
+# BULK APPROVE
 # =========================================================
 
 async def bulk_approve_worker(
     client,
     user_id,
     chat_id,
-    limit
+    amount
 ):
+
+    success = 0
+    failed = 0
 
     try:
 
-        requests = await get_pending_requests(
-            chat_id,
-            limit
-        )
-
-        total = len(requests)
-
-        if total == 0:
-
-            await client.send_message(
-                user_id,
-                "❌ No saved pending requests "
-                "found for this chat."
-            )
-
-            return
-
         await client.send_message(
             user_id,
-            "⚡ **Bulk Approval Started**\n\n"
-            f"📥 Requests: `{total:,}`\n\n"
-            "⏳ Please wait..."
+            "🚀 **APPROVAL STARTED**\n\n"
+            f"📢 Chat ID: `{chat_id}`\n"
+            f"👤 Requested: `{amount:,}`\n\n"
+            "⏳ Approving pending requests..."
         )
 
-        success = 0
-        failed = 0
+        # -------------------------------------------------
+        # Process in batches.
+        # No artificial maximum limit.
+        # -------------------------------------------------
 
-        # -----------------------------------------
-        # BATCHES
-        # -----------------------------------------
+        remaining = amount
 
-        for index in range(
-            0,
-            total,
-            20
-        ):
+        while remaining > 0:
 
-            batch = requests[
-                index:index + 20
-            ]
+            batch_size = min(
+                100,
+                remaining
+            )
+
+            requests = await get_pending_requests(
+                chat_id,
+                batch_size
+            )
+
+            if not requests:
+                break
 
             async def approve_one(req):
 
@@ -1382,6 +1304,36 @@ async def bulk_approve_worker(
 
                     success += 1
 
+                except FloodWait as e:
+
+                    await asyncio.sleep(
+                        e.value
+                    )
+
+                    try:
+
+                        await approve_join_request(
+                            chat_id,
+                            uid
+                        )
+
+                        await delete_request(
+                            chat_id,
+                            uid
+                        )
+
+                        success += 1
+
+                    except Exception as retry_error:
+
+                        failed += 1
+
+                        LOGGER.error(
+                            f"Retry failed "
+                            f"{uid}: "
+                            f"{retry_error}"
+                        )
+
                 except Exception as e:
 
                     failed += 1
@@ -1394,28 +1346,39 @@ async def bulk_approve_worker(
             await asyncio.gather(
                 *[
                     approve_one(req)
-                    for req in batch
+                    for req in requests
                 ],
                 return_exceptions=True
             )
 
+            remaining -= len(requests)
+
+            # Keep API traffic controlled.
             await asyncio.sleep(
                 0.15
             )
 
+        # -------------------------------------------------
+        # COMPLETED
+        # -------------------------------------------------
+
         await client.send_message(
             user_id,
-            "✅ **BULK APPROVAL COMPLETED**\n\n"
-            f"📥 Total: `{total:,}`\n"
+            "✅ **APPROVAL COMPLETED**\n\n"
+            f"📥 Requested: `{amount:,}`\n"
             f"✅ Approved: `{success:,}`\n"
-            f"❌ Failed: `{failed:,}`"
+            f"❌ Failed: `{failed:,}`\n"
+            f"⏭️ Not Available: "
+            f"`{max(0, amount - success - failed):,}`"
         )
 
     except asyncio.CancelledError:
 
         await client.send_message(
             user_id,
-            "⏹ **Bulk Approval Stopped.**"
+            "⏹ **APPROVAL STOPPED**\n\n"
+            f"✅ Approved: `{success:,}`\n"
+            f"❌ Failed: `{failed:,}`"
         )
 
         raise
@@ -1423,12 +1386,13 @@ async def bulk_approve_worker(
     except Exception as e:
 
         LOGGER.exception(
-            f"Bulk error: {e}"
+            f"Bulk approval error: {e}"
         )
 
         await client.send_message(
             user_id,
-            f"❌ **Error**\n\n`{e}`"
+            f"❌ **Approval Error**\n\n"
+            f"`{e}`"
         )
 
     finally:
@@ -1440,131 +1404,7 @@ async def bulk_approve_worker(
 
 
 # =========================================================
-# NUMBER INPUT
-# =========================================================
-
-def parse_number(value):
-
-    value = value.lower().strip()
-
-    try:
-
-        if value.endswith("k"):
-
-            return int(
-                float(
-                    value[:-1]
-                ) * 1000
-            )
-
-        if value.endswith("m"):
-
-            return int(
-                float(
-                    value[:-1]
-                ) * 1000000
-            )
-
-        return int(value)
-
-    except Exception:
-
-        return None
-
-
-@app.on_message(
-    filters.private
-    & filters.text
-    & ~filters.command(
-        [
-            "start",
-            "panel",
-            "cancel",
-            "approve",
-            "addmember",
-            "stop",
-            "remove",
-            "setad",
-            "delad",
-            "broadcast",
-            "status",
-            "groups",
-            "channels"
-        ]
-    )
-)
-async def number_input_handler(
-    client,
-    message
-):
-
-    user_id = message.from_user.id
-
-    if user_id not in awaiting_add_count:
-        return
-
-    chat_id = awaiting_add_count.pop(
-        user_id
-    )
-
-    value = parse_number(
-        message.text
-    )
-
-    if not value or value <= 0:
-
-        await message.reply_text(
-            "❌ Invalid number.\n\n"
-            "Example: `100`, `1k`, `10k`"
-        )
-
-        return
-
-    if value > 100000:
-
-        value = 100000
-
-    if not await can_control_chat(
-        client,
-        user_id,
-        chat_id
-    ):
-
-        await message.reply_text(
-            "❌ You don't have permission."
-        )
-
-        return
-
-    if chat_id in running_tasks:
-
-        await message.reply_text(
-            "⚠️ Approval is already running."
-        )
-
-        return
-
-    task = asyncio.create_task(
-        bulk_approve_worker(
-            client,
-            user_id,
-            chat_id,
-            value
-        )
-    )
-
-    running_tasks[
-        chat_id
-    ] = task
-
-    await message.reply_text(
-        "🚀 **Approval task started.**"
-    )
-
-
-# =========================================================
-# /APPROVE
-# /APPROVE CHAT_ID
+# /APPROVE CHAT_ID NUMBER
 # =========================================================
 
 @app.on_message(
@@ -1578,83 +1418,34 @@ async def approve_command(
 
     args = message.command
 
-    if len(args) < 2:
-
-        await message.reply_text(
-            "Usage:\n"
-            "`/approve CHAT_ID`"
-        )
-
-        return
-
-    try:
-
-        chat_id = int(args[1])
-
-    except ValueError:
-
-        await message.reply_text(
-            "❌ Invalid chat ID."
-        )
-
-        return
-
-    if not await can_control_chat(
-        client,
-        message.from_user.id,
-        chat_id
-    ):
-
-        await message.reply_text(
-            "❌ You don't have permission."
-        )
-
-        return
-
-    awaiting_add_count[
-        message.from_user.id
-    ] = chat_id
-
-    await message.reply_text(
-        "👤 Send the number to approve.\n\n"
-        "Example: `100` or `1k`"
-    )
-
-
-# =========================================================
-# /ADDMEMBER
-# =========================================================
-
-@app.on_message(
-    filters.command("addmember")
-    & filters.private
-)
-async def addmember_command(
-    client,
-    message
-):
-
-    args = message.command
+    # EXACT:
+    # /approve CHAT_ID NUMBER
 
     if len(args) < 3:
 
         await message.reply_text(
-            "Usage:\n"
-            "`/addmember CHAT_ID NUMBER`\n\n"
-            "Example:\n"
-            "`/addmember -1001234567890 100`"
+            "❌ **Wrong Format**\n\n"
+            "Use:\n"
+            "`/approve CHAT_ID NUMBER`\n\n"
+            "Examples:\n"
+            "`/approve -1001234567890 100`\n"
+            "`/approve -1001234567890 1k`\n"
+            "`/approve -1001234567890 10k`\n"
+            "`/approve -1001234567890 1m`"
         )
 
         return
 
     try:
 
-        chat_id = int(args[1])
+        chat_id = int(
+            args[1]
+        )
 
     except ValueError:
 
         await message.reply_text(
-            "❌ Invalid chat ID."
+            "❌ Invalid CHAT_ID."
         )
 
         return
@@ -1666,13 +1457,10 @@ async def addmember_command(
     if not amount or amount <= 0:
 
         await message.reply_text(
-            "❌ Invalid number."
+            "❌ Invalid NUMBER."
         )
 
         return
-
-    if amount > 100000:
-        amount = 100000
 
     if not await can_control_chat(
         client,
@@ -1681,7 +1469,8 @@ async def addmember_command(
     ):
 
         await message.reply_text(
-            "❌ You don't have permission."
+            "❌ You don't have permission "
+            "to control this chat."
         )
 
         return
@@ -1689,7 +1478,8 @@ async def addmember_command(
     if chat_id in running_tasks:
 
         await message.reply_text(
-            "⚠️ Already running."
+            "⚠️ Approval is already running "
+            "for this chat."
         )
 
         return
@@ -1707,13 +1497,98 @@ async def addmember_command(
         chat_id
     ] = task
 
-    await message.reply_text(
-        "🚀 Bulk approval started."
+
+# =========================================================
+# /AUTOAPPROVE CHAT_ID ON/OFF
+# =========================================================
+
+@app.on_message(
+    filters.command("autoapprove")
+    & filters.private
+)
+async def autoapprove_command(
+    client,
+    message
+):
+
+    args = message.command
+
+    if len(args) < 3:
+
+        await message.reply_text(
+            "❌ **Wrong Format**\n\n"
+            "Use:\n"
+            "`/autoapprove CHAT_ID on`\n"
+            "`/autoapprove CHAT_ID off`"
+        )
+
+        return
+
+    try:
+
+        chat_id = int(
+            args[1]
+        )
+
+    except ValueError:
+
+        await message.reply_text(
+            "❌ Invalid CHAT_ID."
+        )
+
+        return
+
+    status = args[2].lower()
+
+    if status not in (
+        "on",
+        "off"
+    ):
+
+        await message.reply_text(
+            "❌ Use only `on` or `off`."
+        )
+
+        return
+
+    if not await can_control_chat(
+        client,
+        message.from_user.id,
+        chat_id
+    ):
+
+        await message.reply_text(
+            "❌ You don't have permission."
+        )
+
+        return
+
+    enabled = status == "on"
+
+    await set_auto_approve(
+        chat_id,
+        enabled
     )
+
+    if enabled:
+
+        await message.reply_text(
+            "🟢 **AUTO APPROVE ON**\n\n"
+            "New join requests will now be "
+            "automatically approved."
+        )
+
+    else:
+
+        await message.reply_text(
+            "🔴 **AUTO APPROVE OFF**\n\n"
+            "New join requests will no longer "
+            "be automatically approved."
+        )
 
 
 # =========================================================
-# /STOP
+# STOP
 # =========================================================
 
 @app.on_message(
@@ -1738,12 +1613,26 @@ async def stop_command(
 
     try:
 
-        chat_id = int(args[1])
+        chat_id = int(
+            args[1]
+        )
 
     except ValueError:
 
         await message.reply_text(
-            "❌ Invalid chat ID."
+            "❌ Invalid CHAT_ID."
+        )
+
+        return
+
+    if not await can_control_chat(
+        client,
+        message.from_user.id,
+        chat_id
+    ):
+
+        await message.reply_text(
+            "❌ You don't have permission."
         )
 
         return
@@ -1755,7 +1644,7 @@ async def stop_command(
     if not task:
 
         await message.reply_text(
-            "ℹ️ No running approval."
+            "ℹ️ No approval task is running."
         )
 
         return
@@ -1768,12 +1657,89 @@ async def stop_command(
     )
 
     await message.reply_text(
-        "⏹ **Approval stopped.**"
+        "⏹ **APPROVAL STOPPED**"
     )
 
 
 # =========================================================
-# /REMOVE
+# REMOVE FUNCTION
+# =========================================================
+
+async def remove_pending(
+    client,
+    user_id,
+    chat_id
+):
+
+    if not await can_control_chat(
+        client,
+        user_id,
+        chat_id
+    ):
+
+        await client.send_message(
+            user_id,
+            "❌ You don't have permission."
+        )
+
+        return
+
+    total = 0
+    failed = 0
+
+    while True:
+
+        requests = await get_pending_requests(
+            chat_id,
+            100
+        )
+
+        if not requests:
+            break
+
+        for req in requests:
+
+            uid = req.get(
+                "user_id"
+            )
+
+            try:
+
+                await decline_join_request(
+                    chat_id,
+                    uid
+                )
+
+                await delete_request(
+                    chat_id,
+                    uid
+                )
+
+                total += 1
+
+            except Exception as e:
+
+                failed += 1
+
+                LOGGER.error(
+                    f"Remove failed "
+                    f"{uid}: {e}"
+                )
+
+        await asyncio.sleep(
+            0.15
+        )
+
+    await client.send_message(
+        user_id,
+        "🗑 **REMOVE COMPLETED**\n\n"
+        f"✅ Removed: `{total:,}`\n"
+        f"❌ Failed: `{failed:,}`"
+    )
+
+
+# =========================================================
+# /REMOVE CHAT_ID
 # =========================================================
 
 @app.on_message(
@@ -1798,70 +1764,27 @@ async def remove_command(
 
     try:
 
-        chat_id = int(args[1])
+        chat_id = int(
+            args[1]
+        )
 
     except ValueError:
 
         await message.reply_text(
-            "❌ Invalid chat ID."
+            "❌ Invalid CHAT_ID."
         )
 
         return
 
-    if not await can_control_chat(
+    await remove_pending(
         client,
         message.from_user.id,
         chat_id
-    ):
-
-        await message.reply_text(
-            "❌ You don't have permission."
-        )
-
-        return
-
-    requests = await get_pending_requests(
-        chat_id,
-        10000
-    )
-
-    success = 0
-
-    for request in requests:
-
-        uid = request.get(
-            "user_id"
-        )
-
-        try:
-
-            await decline_join_request(
-                chat_id,
-                uid
-            )
-
-            await delete_request(
-                chat_id,
-                uid
-            )
-
-            success += 1
-
-        except Exception as e:
-
-            LOGGER.error(
-                f"Remove failed "
-                f"{uid}: {e}"
-            )
-
-    await message.reply_text(
-        "🗑 **REMOVE COMPLETED**\n\n"
-        f"✅ Removed: `{success:,}`"
     )
 
 
 # =========================================================
-# /SETAD
+# SET AD
 # =========================================================
 
 @app.on_message(
@@ -1890,20 +1813,22 @@ async def setad_command(
 
         return
 
-    text = message.text.split(
+    ad_text = message.text.split(
         " ",
         1
     )[1]
 
-    await save_ad(text)
+    await save_ad(
+        ad_text
+    )
 
     await message.reply_text(
-        "✅ Advertisement saved."
+        "✅ **Advertisement Saved**"
     )
 
 
 # =========================================================
-# /DELAD
+# DELETE AD
 # =========================================================
 
 @app.on_message(
@@ -1926,12 +1851,12 @@ async def delad_command(
     await delete_ad()
 
     await message.reply_text(
-        "🗑 Advertisement deleted."
+        "🗑 **Advertisement Deleted**"
     )
 
 
 # =========================================================
-# /STATUS
+# STATUS
 # =========================================================
 
 @app.on_message(
@@ -1951,14 +1876,14 @@ async def status_command(
     await message.reply_text(
         "📊 **BOT STATUS**\n\n"
         f"👤 Users: `{users:,}`\n"
-        f"▶️ Started: `{started:,}`\n"
+        f"▶️ Started Users: `{started:,}`\n"
         f"👥 Groups: `{groups:,}`\n"
         f"📢 Channels: `{channels:,}`"
     )
 
 
 # =========================================================
-# /GROUPS
+# GROUPS
 # =========================================================
 
 @app.on_message(
@@ -1995,7 +1920,7 @@ async def groups_command(
 
 
 # =========================================================
-# /CHANNELS
+# CHANNELS
 # =========================================================
 
 @app.on_message(
@@ -2032,7 +1957,7 @@ async def channels_command(
 
 
 # =========================================================
-# /BROADCAST
+# BROADCAST
 # =========================================================
 
 @app.on_message(
@@ -2055,9 +1980,8 @@ async def broadcast_command(
     if not message.reply_to_message:
 
         await message.reply_text(
-            "📢 **Broadcast**\n\n"
-            "Reply to the message you want "
-            "to broadcast and use `/broadcast`."
+            "📢 Reply to a message and use:\n"
+            "`/broadcast`"
         )
 
         return
@@ -2066,24 +1990,24 @@ async def broadcast_command(
         started_only=True
     )
 
-    groups = await get_all_chats()
+    chats = await get_all_chats()
 
     user_success = 0
     user_failed = 0
 
-    group_success = 0
-    group_failed = 0
+    chat_success = 0
+    chat_failed = 0
 
     status = await message.reply_text(
-        "📢 **Broadcast Started**\n\n"
+        "📢 **BROADCAST STARTED**\n\n"
         f"👤 Users: `{len(users):,}`\n"
-        f"👥 Groups/Channels: `{len(groups):,}`\n\n"
+        f"👥 Groups/Channels: `{len(chats):,}`\n\n"
         "⏳ Please wait..."
     )
 
-    # -----------------------------------------
+    # -----------------------------------------------------
     # USERS
-    # -----------------------------------------
+    # -----------------------------------------------------
 
     for user in users:
 
@@ -2129,8 +2053,8 @@ async def broadcast_command(
             error = str(e).lower()
 
             if any(
-                word in error
-                for word in (
+                x in error
+                for x in (
                     "blocked",
                     "deactivated",
                     "peer id invalid",
@@ -2139,9 +2063,11 @@ async def broadcast_command(
             ):
 
                 try:
+
                     await delete_user(
                         uid
                     )
+
                 except Exception:
                     pass
 
@@ -2149,11 +2075,11 @@ async def broadcast_command(
             0.04
         )
 
-    # -----------------------------------------
+    # -----------------------------------------------------
     # GROUPS / CHANNELS
-    # -----------------------------------------
+    # -----------------------------------------------------
 
-    for chat in groups:
+    for chat in chats:
 
         chat_id = chat.get(
             "chat_id"
@@ -2165,7 +2091,7 @@ async def broadcast_command(
                 chat_id=chat_id
             )
 
-            group_success += 1
+            chat_success += 1
 
         except FloodWait as e:
 
@@ -2179,15 +2105,15 @@ async def broadcast_command(
                     chat_id=chat_id
                 )
 
-                group_success += 1
+                chat_success += 1
 
             except Exception:
 
-                group_failed += 1
+                chat_failed += 1
 
         except Exception as e:
 
-            group_failed += 1
+            chat_failed += 1
 
             LOGGER.error(
                 f"Broadcast chat "
@@ -2198,6 +2124,10 @@ async def broadcast_command(
             0.08
         )
 
+    # -----------------------------------------------------
+    # RESULT
+    # -----------------------------------------------------
+
     await status.edit_text(
         "✅ **BROADCAST COMPLETED**\n\n"
         "👤 **USERS**\n"
@@ -2207,9 +2137,9 @@ async def broadcast_command(
         f"❌ Failed: `{user_failed:,}`\n\n"
         "👥 **GROUPS / CHANNELS**\n"
         "━━━━━━━━━━━━━━\n"
-        f"Total: `{len(groups):,}`\n"
-        f"✅ Sent: `{group_success:,}`\n"
-        f"❌ Failed: `{group_failed:,}`"
+        f"Total: `{len(chats):,}`\n"
+        f"✅ Sent: `{chat_success:,}`\n"
+        f"❌ Failed: `{chat_failed:,}`"
     )
 
 
@@ -2246,33 +2176,6 @@ async def startup():
 
 if __name__ == "__main__":
 
-    app.start()
-
-    try:
-
-        loop = asyncio.get_event_loop()
-
-        loop.run_until_complete(
-            startup()
-        )
-
-        idle = asyncio.Event()
-
-        try:
-
-            loop.run_until_complete(
-                idle.wait()
-            )
-
-        except KeyboardInterrupt:
-
-            pass
-
-    finally:
-
-        try:
-
-            app.stop()
-
-        except Exception:
-            pass
+    app.run(
+        startup()
+    )
