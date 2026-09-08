@@ -1,363 +1,195 @@
-import os
-
 from motor.motor_asyncio import AsyncIOMotorClient
+from config import MONGO_URL
 
 
-MONGO_URL = os.environ["MONGO_URL"]
+# MongoDB connection
+mongo_client = AsyncIOMotorClient(
+    MONGO_URL,
+    serverSelectionTimeoutMS=10000,
+)
 
-mongo = AsyncIOMotorClient(MONGO_URL)
+db = mongo_client["auto_join_request_bot"]
 
-db = mongo["join_request_bot"]
 
-settings_collection = db["settings"]
-ads_collection = db["ads"]
-requests_collection = db["requests"]
+# Collections
 users_collection = db["users"]
+chats_collection = db["chats"]
 groups_collection = db["groups"]
-
-
-# =========================================================
-# AUTO APPROVE
-# =========================================================
-
-async def get_auto_approve(chat_id: int) -> bool:
-
-    data = await settings_collection.find_one(
-        {"chat_id": chat_id}
-    )
-
-    if not data:
-        return False
-
-    return bool(
-        data.get("auto_approve", False)
-    )
-
-
-async def set_auto_approve(
-    chat_id: int,
-    status: bool
-):
-
-    await settings_collection.update_one(
-        {"chat_id": chat_id},
-        {
-            "$set": {
-                "chat_id": chat_id,
-                "auto_approve": status
-            }
-        },
-        upsert=True
-    )
-
-
-# =========================================================
-# ADVERTISEMENT
-# =========================================================
-
-async def get_ad():
-
-    data = await ads_collection.find_one(
-        {"_id": "global_ad"}
-    )
-
-    if not data:
-        return None
-
-    return data.get("text")
-
-
-async def save_ad(text: str):
-
-    await ads_collection.update_one(
-        {"_id": "global_ad"},
-        {
-            "$set": {
-                "text": text
-            }
-        },
-        upsert=True
-    )
-
-
-async def delete_ad():
-
-    await ads_collection.delete_one(
-        {"_id": "global_ad"}
-    )
-
-
-# =========================================================
-# USERS
-# =========================================================
-
-async def save_user(
-    user_id: int,
-    started: bool = False,
-    name: str = "",
-    username: str = ""
-):
-
-    update = {
-        "user_id": user_id,
-        "name": name,
-        "username": username
-    }
-
-    if started:
-        update["started"] = True
-
-    await users_collection.update_one(
-        {"user_id": user_id},
-        {"$set": update},
-        upsert=True
-    )
-
-
-async def mark_user_started(
-    user_id: int
-):
-
-    await users_collection.update_one(
-        {"user_id": user_id},
-        {
-            "$set": {
-                "user_id": user_id,
-                "started": True
-            }
-        },
-        upsert=True
-    )
-
-
-async def get_all_users(
-    started_only: bool = False
-):
-
-    query = {}
-
-    if started_only:
-        query["started"] = True
-
-    cursor = users_collection.find(
-        query,
-        {
-            "_id": 0,
-            "user_id": 1
-        }
-    )
-
-    return await cursor.to_list(
-        length=None
-    )
-
-
-async def delete_user(
-    user_id: int
-):
-
-    await users_collection.delete_one(
-        {"user_id": user_id}
-    )
-
-
-async def get_total_users():
-
-    return await users_collection.count_documents({})
-
-
-async def get_started_users():
-
-    return await users_collection.count_documents(
-        {"started": True}
-    )
-
-
-# =========================================================
-# GROUPS / CHANNELS
-# =========================================================
-
-async def save_group(
-    chat_id: int,
-    title: str = "",
-    chat_type: str = "group",
-    username: str = ""
-):
-
-    await groups_collection.update_one(
-        {"chat_id": chat_id},
-        {
-            "$set": {
-                "chat_id": chat_id,
-                "title": title,
-                "type": chat_type,
-                "username": username
-            }
-        },
-        upsert=True
-    )
-
-
-async def delete_group(
-    chat_id: int
-):
-
-    await groups_collection.delete_one(
-        {"chat_id": chat_id}
-    )
-
-
-async def get_all_groups():
-
-    cursor = groups_collection.find(
-        {
-            "type": {
-                "$in": [
-                    "group",
-                    "supergroup"
-                ]
-            }
-        },
-        {
-            "_id": 0,
-            "chat_id": 1,
-            "title": 1,
-            "type": 1,
-            "username": 1
-        }
-    )
-
-    return await cursor.to_list(
-        length=None
-    )
-
-
-async def get_all_channels():
-
-    cursor = groups_collection.find(
-        {"type": "channel"},
-        {
-            "_id": 0,
-            "chat_id": 1,
-            "title": 1,
-            "type": 1,
-            "username": 1
-        }
-    )
-
-    return await cursor.to_list(
-        length=None
-    )
-
-
-async def get_all_chats():
-
-    cursor = groups_collection.find(
-        {},
-        {
-            "_id": 0,
-            "chat_id": 1,
-            "title": 1,
-            "type": 1,
-            "username": 1
-        }
-    )
-
-    return await cursor.to_list(
-        length=None
-    )
-
-
-async def get_total_groups():
-
-    return await groups_collection.count_documents(
-        {
-            "type": {
-                "$in": [
-                    "group",
-                    "supergroup"
-                ]
-            }
-        }
-    )
-
-
-async def get_total_channels():
-
-    return await groups_collection.count_documents(
-        {"type": "channel"}
-    )
-
-
-async def get_chat_info(
-    chat_id: int
-):
-
-    return await groups_collection.find_one(
-        {"chat_id": chat_id},
-        {"_id": 0}
-    )
-
-
-# =========================================================
-# JOIN REQUESTS
-# =========================================================
-
-async def save_request(
-    chat_id: int,
-    user_id: int,
-    name: str = "",
-    username: str = ""
-):
-
-    await requests_collection.update_one(
-        {
-            "chat_id": chat_id,
-            "user_id": user_id
-        },
-        {
-            "$set": {
-                "chat_id": chat_id,
-                "user_id": user_id,
-                "name": name,
-                "username": username
-            }
-        },
-        upsert=True
-    )
-
-
-async def get_pending_requests(
-    chat_id: int,
-    limit: int = 100
-):
-
-    cursor = requests_collection.find(
-        {"chat_id": chat_id}
-    ).limit(limit)
-
-    return await cursor.to_list(
-        length=limit
-    )
-
-
-async def delete_request(
-    chat_id: int,
-    user_id: int
-):
-
-    await requests_collection.delete_one(
-        {
-            "chat_id": chat_id,
-            "user_id": user_id
-        }
-    )
-
-
-async def get_pending_count(
-    chat_id: int
-):
-
-    return await requests_collection.count_documents(
-        {"chat_id": chat_id}
-    )
+ads_collection = db["ads"]
+
+
+class Database:
+
+    # -------------------------
+    # USERS
+    # -------------------------
+
+    async def save_user(self, user):
+        if not user:
+            return
+
+        await users_collection.update_one(
+            {"_id": user.id},
+            {
+                "$set": {
+                    "user_id": user.id,
+                    "username": user.username,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                }
+            },
+            upsert=True,
+        )
+
+    async def user_exists(self, user_id: int):
+        return await users_collection.find_one(
+            {"_id": user_id}
+        ) is not None
+
+    async def get_user_ids(self):
+        cursor = users_collection.find(
+            {},
+            {"_id": 1}
+        )
+
+        return [
+            document["_id"]
+            async for document in cursor
+        ]
+
+    async def count_users(self):
+        return await users_collection.count_documents({})
+
+    # -------------------------
+    # GROUPS / CHANNELS
+    # -------------------------
+
+    async def save_chat(self, chat):
+        if not chat:
+            return
+
+        chat_type = str(chat.type)
+
+        await chats_collection.update_one(
+            {"_id": chat.id},
+            {
+                "$set": {
+                    "chat_id": chat.id,
+                    "title": getattr(chat, "title", None),
+                    "username": getattr(chat, "username", None),
+                    "type": chat_type,
+                }
+            },
+            upsert=True,
+        )
+
+    async def save_group(self, chat):
+        if not chat:
+            return
+
+        await groups_collection.update_one(
+            {"_id": chat.id},
+            {
+                "$set": {
+                    "chat_id": chat.id,
+                    "title": getattr(chat, "title", None),
+                    "username": getattr(chat, "username", None),
+                    "type": str(chat.type),
+                },
+                "$setOnInsert": {
+                    # IMPORTANT:
+                    # Group auto approval is OFF by default.
+                    "approve_enabled": False,
+                },
+            },
+            upsert=True,
+        )
+
+    async def get_group(self, chat_id: int):
+        return await groups_collection.find_one(
+            {"_id": chat_id}
+        )
+
+    async def set_group_approval(
+        self,
+        chat_id: int,
+        enabled: bool
+    ):
+        await groups_collection.update_one(
+            {"_id": chat_id},
+            {
+                "$set": {
+                    "approve_enabled": enabled
+                }
+            },
+            upsert=True,
+        )
+
+    async def is_group_approval_enabled(
+        self,
+        chat_id: int
+    ):
+        group = await self.get_group(chat_id)
+
+        if not group:
+            return False
+
+        return group.get(
+            "approve_enabled",
+            False
+        )
+
+    async def get_group_ids(self):
+        cursor = groups_collection.find(
+            {},
+            {"_id": 1}
+        )
+
+        return [
+            document["_id"]
+            async for document in cursor
+        ]
+
+    async def count_groups(self):
+        return await groups_collection.count_documents({})
+
+    async def count_chats(self):
+        return await chats_collection.count_documents({})
+
+    # -------------------------
+    # ADVERTISEMENT
+    # -------------------------
+
+    async def set_ad(
+        self,
+        chat_id: int,
+        message_id: int
+    ):
+        await ads_collection.update_one(
+            {"_id": "main"},
+            {
+                "$set": {
+                    "chat_id": chat_id,
+                    "message_id": message_id,
+                }
+            },
+            upsert=True,
+        )
+
+    async def get_ad(self):
+        return await ads_collection.find_one(
+            {"_id": "main"}
+        )
+
+    async def delete_ad(self):
+        await ads_collection.delete_one(
+            {"_id": "main"}
+        )
+
+    async def has_ad(self):
+        return await ads_collection.find_one(
+            {"_id": "main"}
+        ) is not None
+
+
+db = Database()
