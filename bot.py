@@ -3,125 +3,145 @@ import logging
 
 from pyrogram import Client, filters, enums
 from pyrogram.types import ChatJoinRequest
-from pyrogram.errors import FloodWait, RPCError
+from pyrogram.errors import FloodWait
 
 from config import API_ID, API_HASH, BOT_TOKEN, OWNER_ID
 from database import db
 
 
-# =========================================================
+# ============================================================
 # LOGGING
-# =========================================================
+# ============================================================
 
 logging.basicConfig(
     level=logging.INFO,
-    format="[%(asctime)s] %(levelname)s - %(message)s",
+    format="[%(asctime)s] %(levelname)s - %(message)s"
 )
 
-LOGGER = logging.getLogger("AutoJoinBot")
+LOGGER = logging.getLogger("AUTO-APPROVE")
 
 
-# =========================================================
-# BOT
-# =========================================================
+# ============================================================
+# CLIENT
+# ============================================================
 
 app = Client(
-    "auto_join_request_bot",
+    "auto_approve_bot",
     api_id=API_ID,
     api_hash=API_HASH,
-    bot_token=BOT_TOKEN,
+    bot_token=BOT_TOKEN
 )
 
 
-# =========================================================
-# OWNER CHECK
-# =========================================================
+# ============================================================
+# HELPERS
+# ============================================================
 
-def is_owner(user_id):
+def owner(user_id: int) -> bool:
     return user_id == OWNER_ID
 
 
 async def is_admin(client, chat_id, user_id):
-    if is_owner(user_id):
+    if owner(user_id):
         return True
 
     try:
         member = await client.get_chat_member(
             chat_id,
-            user_id,
+            user_id
         )
 
         return member.status in (
             enums.ChatMemberStatus.OWNER,
-            enums.ChatMemberStatus.ADMINISTRATOR,
+            enums.ChatMemberStatus.ADMINISTRATOR
         )
 
     except Exception:
         return False
 
 
-# =========================================================
-# SAVE USER
-# =========================================================
-
-async def save_request_user(user):
+async def save_user(user):
     try:
         await db.save_user(user)
     except Exception as e:
-        LOGGER.error(
-            "Could not save user %s: %s",
-            user.id,
-            e,
-        )
+        LOGGER.error("Save user error: %s", e)
 
 
-# =========================================================
-# SEND ADVERTISEMENT
-# =========================================================
+async def save_chat(chat):
+    try:
+        await db.save_chat(chat)
+    except Exception as e:
+        LOGGER.error("Save chat error: %s", e)
+
+
+# ============================================================
+# ADVERTISEMENT
+# ============================================================
 
 async def send_ad(client, user_id):
+
     ad = await db.get_ad()
 
     if not ad:
-        return False
+        return
 
     try:
-        await client.copy_message(
-            chat_id=user_id,
-            from_chat_id=ad["chat_id"],
-            message_id=ad["message_id"],
-        )
 
-        return True
+        # Text advertisement
+        if ad.get("text"):
 
-    except FloodWait as e:
-        await asyncio.sleep(e.value)
+            await client.send_message(
+                user_id,
+                ad["text"]
+            )
 
-        try:
+            return
+
+        # Replied message advertisement
+        if ad.get("chat_id") and ad.get("message_id"):
+
             await client.copy_message(
                 chat_id=user_id,
                 from_chat_id=ad["chat_id"],
-                message_id=ad["message_id"],
+                message_id=ad["message_id"]
             )
 
-            return True
+    except FloodWait as e:
+
+        await asyncio.sleep(e.value)
+
+        try:
+
+            if ad.get("text"):
+
+                await client.send_message(
+                    user_id,
+                    ad["text"]
+                )
+
+            elif ad.get("chat_id"):
+
+                await client.copy_message(
+                    chat_id=user_id,
+                    from_chat_id=ad["chat_id"],
+                    message_id=ad["message_id"]
+                )
 
         except Exception:
-            return False
+            pass
 
     except Exception as e:
+
         LOGGER.warning(
-            "Advertisement could not be sent to %s: %s",
+            "Could not send ad to %s: %s",
             user_id,
-            e,
+            e
         )
 
-        return False
 
-
-# =========================================================
-# JOIN REQUEST HANDLER
-# =========================================================
+# ============================================================
+# JOIN REQUEST
+# ============================================================
 
 @app.on_chat_join_request()
 async def join_request(client, request: ChatJoinRequest):
@@ -129,28 +149,12 @@ async def join_request(client, request: ChatJoinRequest):
     user = request.from_user
     chat = request.chat
 
-    # -----------------------------------------------------
-    # Save user
-    # -----------------------------------------------------
+    await save_user(user)
+    await save_chat(chat)
 
-    await save_request_user(user)
-
-    # -----------------------------------------------------
-    # Save chat
-    # -----------------------------------------------------
-
-    try:
-        await db.save_chat(chat)
-    except Exception as e:
-        LOGGER.warning(
-            "Could not save chat %s: %s",
-            chat.id,
-            e,
-        )
-
-    # =====================================================
+    # ========================================================
     # CHANNEL
-    # =====================================================
+    # ========================================================
 
     if chat.type == enums.ChatType.CHANNEL:
 
@@ -158,19 +162,18 @@ async def join_request(client, request: ChatJoinRequest):
 
             await client.approve_chat_join_request(
                 chat.id,
-                user.id,
+                user.id
             )
 
             LOGGER.info(
-                "Channel request approved: %s -> %s",
+                "CHANNEL APPROVED | %s | %s",
                 user.id,
-                chat.id,
+                chat.id
             )
 
-            # Try sending advertisement.
             await send_ad(
                 client,
-                user.id,
+                user.id
             )
 
         except FloodWait as e:
@@ -178,46 +181,44 @@ async def join_request(client, request: ChatJoinRequest):
             await asyncio.sleep(e.value)
 
             try:
+
                 await client.approve_chat_join_request(
                     chat.id,
-                    user.id,
+                    user.id
                 )
 
                 await send_ad(
                     client,
-                    user.id,
+                    user.id
                 )
 
             except Exception as error:
-                LOGGER.warning(
-                    "Channel approval retry failed: %s",
-                    error,
+                LOGGER.error(
+                    "Channel retry error: %s",
+                    error
                 )
 
         except Exception as e:
 
-            LOGGER.warning(
-                "Channel approval failed: %s",
-                e,
+            LOGGER.error(
+                "Channel approval error: %s",
+                e
             )
 
         return
 
-    # =====================================================
-    # GROUP / SUPERGROUP
-    # =====================================================
+    # ========================================================
+    # GROUP
+    # ========================================================
 
     if chat.type not in (
         enums.ChatType.GROUP,
-        enums.ChatType.SUPERGROUP,
+        enums.ChatType.SUPERGROUP
     ):
         return
 
-    # -----------------------------------------------------
-    # IMPORTANT
-    #
-    # GROUP AUTO APPROVAL IS OFF BY DEFAULT.
-    # -----------------------------------------------------
+    # IMPORTANT:
+    # Group approval is OFF by default.
 
     enabled = await db.is_group_approval_enabled(
         chat.id
@@ -226,32 +227,32 @@ async def join_request(client, request: ChatJoinRequest):
     if not enabled:
 
         LOGGER.info(
-            "Group request left pending because approval is OFF: %s",
-            chat.id,
+            "GROUP REQUEST PENDING | APPROVAL OFF | %s",
+            chat.id
         )
 
         return
 
-    # -----------------------------------------------------
-    # APPROVE GROUP REQUEST
-    # -----------------------------------------------------
+    # ========================================================
+    # AUTO APPROVE GROUP
+    # ========================================================
 
     try:
 
         await client.approve_chat_join_request(
             chat.id,
-            user.id,
+            user.id
         )
 
         LOGGER.info(
-            "Group request approved: %s -> %s",
+            "GROUP APPROVED | %s | %s",
             user.id,
-            chat.id,
+            chat.id
         )
 
         await send_ad(
             client,
-            user.id,
+            user.id
         )
 
     except FloodWait as e:
@@ -262,135 +263,170 @@ async def join_request(client, request: ChatJoinRequest):
 
             await client.approve_chat_join_request(
                 chat.id,
-                user.id,
+                user.id
             )
 
             await send_ad(
                 client,
-                user.id,
+                user.id
             )
 
         except Exception as error:
 
-            LOGGER.warning(
-                "Group approval retry failed: %s",
-                error,
+            LOGGER.error(
+                "Group retry error: %s",
+                error
             )
 
     except Exception as e:
 
-        LOGGER.warning(
-            "Group approval failed: %s",
-            e,
+        LOGGER.error(
+            "Group approval error: %s",
+            e
         )
 
 
-# =========================================================
+# ============================================================
 # START
-# =========================================================
+# ============================================================
 
 @app.on_message(
-    filters.command("start")
-    & filters.private
+    filters.command("start") & filters.private
 )
 async def start_command(client, message):
 
-    await save_request_user(
+    await save_user(
         message.from_user
     )
 
     await message.reply_text(
         "👋 Welcome!\n\n"
-        "You are now registered with the bot."
+        "✅ You are registered successfully."
     )
 
 
-# =========================================================
+# ============================================================
 # SET AD
-# =========================================================
+# ============================================================
 
 @app.on_message(
-    filters.command("setad")
-    & filters.private
+    filters.command("setad") & filters.private
 )
-async def set_ad_command(client, message):
+async def setad_command(client, message):
 
-    if not is_owner(message.from_user.id):
+    if not owner(message.from_user.id):
         return
 
-    if not message.reply_to_message:
+    # --------------------------------------------------------
+    # /setad hello
+    # --------------------------------------------------------
+
+    text = message.text.split(
+        " ",
+        1
+    )
+
+    if len(text) > 1 and text[1].strip():
+
+        ad_text = text[1].strip()
+
+        await db.set_ad_text(
+            ad_text
+        )
 
         await message.reply_text(
-            "❌ Reply to the advertisement message "
-            "and use /setad"
+            "✅ Advertisement saved.\n\n"
+            f"📝 {ad_text}"
         )
 
         return
 
-    replied = message.reply_to_message
+    # --------------------------------------------------------
+    # Reply + /setad
+    # --------------------------------------------------------
 
-    await db.set_ad(
-        replied.chat.id,
-        replied.id,
-    )
+    if message.reply_to_message:
+
+        replied = message.reply_to_message
+
+        await db.set_ad(
+            replied.chat.id,
+            replied.id
+        )
+
+        await message.reply_text(
+            "✅ Advertisement message saved."
+        )
+
+        return
+
+    # --------------------------------------------------------
+    # No text / no reply
+    # --------------------------------------------------------
 
     await message.reply_text(
-        "✅ Advertisement saved successfully."
+        "❌ Use:\n\n"
+        "/setad Your advertisement\n\n"
+        "OR reply to any message and send:\n"
+        "/setad"
     )
 
 
-# =========================================================
+# ============================================================
 # DELETE AD
-# =========================================================
+# ============================================================
 
 @app.on_message(
-    filters.command("delad")
-    & filters.private
+    filters.command("delad") & filters.private
 )
-async def delete_ad_command(client, message):
+async def delad_command(client, message):
 
-    if not is_owner(message.from_user.id):
+    if not owner(message.from_user.id):
         return
 
     await db.delete_ad()
 
     await message.reply_text(
-        "🗑 Advertisement deleted."
+        "🗑 Advertisement deleted successfully."
     )
 
 
-# =========================================================
+# ============================================================
 # APPROVE COMMAND
-# =========================================================
+# ============================================================
 
 @app.on_message(
     filters.command("approve")
 )
 async def approve_command(client, message):
 
-    # -----------------------------------------------------
-    # Only groups
-    # -----------------------------------------------------
+    if not message.chat:
+        return
+
+    # --------------------------------------------------------
+    # This command works in GROUP only.
+    # --------------------------------------------------------
 
     if message.chat.type not in (
         enums.ChatType.GROUP,
-        enums.ChatType.SUPERGROUP,
+        enums.ChatType.SUPERGROUP
     ):
 
-        if message.from_user and is_owner(
-            message.from_user.id
+        if (
+            message.from_user
+            and owner(message.from_user.id)
         ):
 
             await message.reply_text(
-                "📢 Channel join requests are "
-                "already approved automatically."
+                "📢 Channel requests are always "
+                "approved automatically."
             )
 
         return
 
-    # -----------------------------------------------------
+    # --------------------------------------------------------
     # Admin check
-    # -----------------------------------------------------
+    # --------------------------------------------------------
 
     if not message.from_user:
         return
@@ -398,67 +434,68 @@ async def approve_command(client, message):
     if not await is_admin(
         client,
         message.chat.id,
-        message.from_user.id,
+        message.from_user.id
     ):
         return
 
     args = message.text.split()
 
-    if len(args) < 2:
+    # /approve
+    if len(args) == 1:
 
         await message.reply_text(
-            "Use:\n\n"
-            "/approve on\n"
-            "/approve off\n"
-            "/approve 10\n"
-            "/approve 20\n"
-            "/approve 50"
+            "⚙️ APPROVE SETTINGS\n\n"
+            "/approve on - Auto approve ON\n"
+            "/approve off - Auto approve OFF\n"
+            "/approve 10 - Approve 10 pending\n"
+            "/approve 20 - Approve 20 pending\n"
+            "/approve 50 - Approve 50 pending"
         )
 
         return
 
     option = args[1].lower()
 
-    # =====================================================
+    # --------------------------------------------------------
     # ON
-    # =====================================================
+    # --------------------------------------------------------
 
     if option == "on":
 
         await db.set_group_approval(
             message.chat.id,
-            True,
+            True
         )
 
         await message.reply_text(
-            "✅ Group auto approval is ON.\n\n"
+            "✅ AUTO APPROVE: ON\n\n"
             "New join requests will now be "
             "approved automatically."
         )
 
         return
 
-    # =====================================================
+    # --------------------------------------------------------
     # OFF
-    # =====================================================
+    # --------------------------------------------------------
 
     if option == "off":
 
         await db.set_group_approval(
             message.chat.id,
-            False,
+            False
         )
 
         await message.reply_text(
-            "🛑 Group auto approval is OFF.\n\n"
+            "🛑 AUTO APPROVE: OFF\n\n"
             "New join requests will remain pending."
         )
 
         return
 
-    # =====================================================
-    # PENDING BATCH
-    # =====================================================
+    # --------------------------------------------------------
+    # NUMBER
+    # --------------------------------------------------------
 
     if option.isdigit():
 
@@ -472,43 +509,41 @@ async def approve_command(client, message):
 
             return
 
-        amount = min(amount, 1000)
-
-        # Enable approval for this group.
-        await db.set_group_approval(
-            message.chat.id,
-            True,
+        # Maximum 1000 per command
+        amount = min(
+            amount,
+            1000
         )
 
         await approve_pending(
             client,
             message.chat.id,
             amount,
-            message,
+            message
         )
 
         return
 
     await message.reply_text(
-        "❌ Invalid option."
+        "❌ Invalid command.\n\n"
+        "Use /approve on\n"
+        "/approve off\n"
+        "/approve 10"
     )
 
 
-# =========================================================
+# ============================================================
 # STOP APPROVAL
-# =========================================================
+# ============================================================
 
 @app.on_message(
     filters.command("stopapprov")
 )
-async def stop_approval_command(
-    client,
-    message,
-):
+async def stopapprov_command(client, message):
 
     if message.chat.type not in (
         enums.ChatType.GROUP,
-        enums.ChatType.SUPERGROUP,
+        enums.ChatType.SUPERGROUP
     ):
         return
 
@@ -518,30 +553,30 @@ async def stop_approval_command(
     if not await is_admin(
         client,
         message.chat.id,
-        message.from_user.id,
+        message.from_user.id
     ):
         return
 
     await db.set_group_approval(
         message.chat.id,
-        False,
+        False
     )
 
     await message.reply_text(
-        "🛑 Auto approval stopped.\n\n"
-        "Pending requests will remain pending."
+        "🛑 AUTO APPROVE STOPPED\n\n"
+        "New requests will remain pending."
     )
 
 
-# =========================================================
-# APPROVE PENDING REQUESTS
-# =========================================================
+# ============================================================
+# APPROVE PENDING
+# ============================================================
 
 async def approve_pending(
     client,
     chat_id,
     amount,
-    message,
+    message
 ):
 
     approved = 0
@@ -551,27 +586,25 @@ async def approve_pending(
 
         async for request in client.get_chat_join_requests(
             chat_id,
-            limit=amount,
+            limit=amount
         ):
 
             user = request.from_user
 
-            await save_request_user(
-                user
-            )
+            await save_user(user)
 
             try:
 
                 await client.approve_chat_join_request(
                     chat_id,
-                    user.id,
+                    user.id
                 )
 
                 approved += 1
 
                 await send_ad(
                     client,
-                    user.id,
+                    user.id
                 )
 
             except FloodWait as e:
@@ -584,14 +617,14 @@ async def approve_pending(
 
                     await client.approve_chat_join_request(
                         chat_id,
-                        user.id,
+                        user.id
                     )
 
                     approved += 1
 
                     await send_ad(
                         client,
-                        user.id,
+                        user.id
                     )
 
                 except Exception:
@@ -603,33 +636,31 @@ async def approve_pending(
     except Exception as e:
 
         await message.reply_text(
-            f"❌ Could not read pending requests.\n\n{e}"
+            "❌ Pending request error:\n\n"
+            f"{e}"
         )
 
         return
 
     await message.reply_text(
-        "✅ Pending approval completed.\n\n"
-        f"Approved: {approved}\n"
-        f"Failed: {failed}"
+        "✅ PENDING APPROVAL COMPLETE\n\n"
+        f"✅ Approved: {approved}\n"
+        f"❌ Failed: {failed}"
     )
 
 
-# =========================================================
-# REMOVE PENDING
-# =========================================================
+# ============================================================
+# REMOVE
+# ============================================================
 
 @app.on_message(
     filters.command("remove")
 )
-async def remove_command(
-    client,
-    message,
-):
+async def remove_command(client, message):
 
     if message.chat.type not in (
         enums.ChatType.GROUP,
-        enums.ChatType.SUPERGROUP,
+        enums.ChatType.SUPERGROUP
     ):
         return
 
@@ -639,7 +670,7 @@ async def remove_command(
     if not await is_admin(
         client,
         message.chat.id,
-        message.from_user.id,
+        message.from_user.id
     ):
         return
 
@@ -661,7 +692,7 @@ async def remove_command(
     if mode not in (
         "pending",
         "ban",
-        "delete",
+        "delete"
     ):
 
         await message.reply_text(
@@ -676,29 +707,30 @@ async def remove_command(
 
         async for request in client.get_chat_join_requests(
             message.chat.id,
-            limit=1000,
+            limit=1000
         ):
 
             user_id = request.from_user.id
 
             try:
 
-                # Remove request from pending.
+                # Remove pending request
                 await client.decline_chat_join_request(
                     message.chat.id,
-                    user_id,
+                    user_id
                 )
 
-                # ban/delete mode:
-                # Telegram does not allow a bot to
-                # delete a user's Telegram account.
-                if mode in ("ban", "delete"):
+                # Ban if requested
+                if mode in (
+                    "ban",
+                    "delete"
+                ):
 
                     try:
 
                         await client.ban_chat_member(
                             message.chat.id,
-                            user_id,
+                            user_id
                         )
 
                     except Exception:
@@ -722,27 +754,23 @@ async def remove_command(
     )
 
 
-# =========================================================
+# ============================================================
 # STATUS
-# =========================================================
+# ============================================================
 
 @app.on_message(
-    filters.command("status")
-    & filters.private
+    filters.command("status") & filters.private
 )
-async def status_command(
-    client,
-    message,
-):
+async def status_command(client, message):
 
-    if not is_owner(message.from_user.id):
+    if not owner(message.from_user.id):
         return
 
     users = await db.count_users()
     groups = await db.count_groups()
     channels = await db.count_channels()
 
-    ad_status = await db.has_ad()
+    ad = await db.has_ad()
 
     await message.reply_text(
         "📊 BOT STATUS\n\n"
@@ -750,101 +778,87 @@ async def status_command(
         f"👥 Total Groups: {groups}\n"
         f"📢 Total Channels: {channels}\n\n"
         f"📣 Advertisement: "
-        f"{'SET ✅' if ad_status else 'NOT SET ❌'}"
+        f"{'SET ✅' if ad else 'NOT SET ❌'}"
     )
 
 
-# =========================================================
+# ============================================================
 # BROADCAST
-# =========================================================
+# ============================================================
 
 @app.on_message(
-    filters.command("broadcast")
-    & filters.private
+    filters.command("broadcast") & filters.private
 )
-async def broadcast_command(
-    client,
-    message,
-):
+async def broadcast_command(client, message):
 
-    if not is_owner(message.from_user.id):
+    if not owner(message.from_user.id):
         return
 
-    if not message.reply_to_message:
+    # --------------------------------------------------------
+    # /broadcast Hello
+    # --------------------------------------------------------
+
+    parts = message.text.split(
+        " ",
+        1
+    )
+
+    broadcast_text = None
+
+    if len(parts) > 1:
+        broadcast_text = parts[1].strip()
+
+    # --------------------------------------------------------
+    # /broadcast as reply
+    # --------------------------------------------------------
+
+    source = message.reply_to_message
+
+    if not source and not broadcast_text:
 
         await message.reply_text(
-            "❌ Reply to the message you want "
-            "to broadcast and use /broadcast"
+            "❌ Use:\n\n"
+            "/broadcast Your message\n\n"
+            "OR reply to a message and send:\n"
+            "/broadcast"
         )
 
         return
 
-    source = message.reply_to_message
+    users = await db.get_user_ids()
+    groups = await db.get_group_ids()
 
-    user_ids = await db.get_user_ids()
-    group_ids = await db.get_group_ids()
+    total_users = len(users)
+    total_groups = len(groups)
 
-    total_users = len(user_ids)
-    total_groups = len(group_ids)
-
-    sent = 0
+    sent_users = 0
+    sent_groups = 0
     failed = 0
 
-    # -----------------------------------------------------
+    # ========================================================
     # USERS
-    # -----------------------------------------------------
+    # ========================================================
 
-    for user_id in user_ids:
+    for user_id in users:
 
         try:
 
-            await client.copy_message(
-                chat_id=user_id,
-                from_chat_id=source.chat.id,
-                message_id=source.id,
-            )
+            if broadcast_text:
 
-            sent += 1
+                await client.send_message(
+                    user_id,
+                    broadcast_text
+                )
 
-            await asyncio.sleep(0.05)
-
-        except FloodWait as e:
-
-            await asyncio.sleep(
-                e.value
-            )
-
-            try:
+            else:
 
                 await client.copy_message(
                     chat_id=user_id,
                     from_chat_id=source.chat.id,
-                    message_id=source.id,
+                    message_id=source.id
                 )
 
-                sent += 1
-
-            except Exception:
-                failed += 1
-
-        except Exception:
-            failed += 1
-
-    # -----------------------------------------------------
-    # GROUPS
-    # -----------------------------------------------------
-
-    for group_id in group_ids:
-
-        try:
-
-            await client.copy_message(
-                chat_id=group_id,
-                from_chat_id=source.chat.id,
-                message_id=source.id,
-            )
-
-            sent += 1
+            sent_users += 1
 
             await asyncio.sleep(0.05)
 
@@ -856,13 +870,22 @@ async def broadcast_command(
 
             try:
 
-                await client.copy_message(
-                    chat_id=group_id,
-                    from_chat_id=source.chat.id,
-                    message_id=source.id,
-                )
+                if broadcast_text:
 
-                sent += 1
+                    await client.send_message(
+                        user_id,
+                        broadcast_text
+                    )
+
+                else:
+
+                    await client.copy_message(
+                        chat_id=user_id,
+                        from_chat_id=source.chat.id,
+                        message_id=source.id
+                    )
+
+                sent_users += 1
 
             except Exception:
                 failed += 1
@@ -870,26 +893,86 @@ async def broadcast_command(
         except Exception:
             failed += 1
 
+    # ========================================================
+    # GROUPS
+    # ========================================================
+
+    for group_id in groups:
+
+        try:
+
+            if broadcast_text:
+
+                await client.send_message(
+                    group_id,
+                    broadcast_text
+                )
+
+            else:
+
+                await client.copy_message(
+                    chat_id=group_id,
+                    from_chat_id=source.chat.id,
+                    message_id=source.id
+                )
+
+            sent_groups += 1
+
+            await asyncio.sleep(0.05)
+
+        except FloodWait as e:
+
+            await asyncio.sleep(
+                e.value
+            )
+
+            try:
+
+                if broadcast_text:
+
+                    await client.send_message(
+                        group_id,
+                        broadcast_text
+                    )
+
+                else:
+
+                    await client.copy_message(
+                        chat_id=group_id,
+                        from_chat_id=source.chat.id,
+                        message_id=source.id
+                    )
+
+                sent_groups += 1
+
+            except Exception:
+                failed += 1
+
+        except Exception:
+            failed += 1
+
+    # ========================================================
+    # RESULT
+    # ========================================================
+
     await message.reply_text(
         "📣 BROADCAST COMPLETED\n\n"
         f"👤 Users: {total_users}\n"
-        f"👥 Groups: {total_groups}\n\n"
-        f"✅ Sent: {sent}\n"
+        f"✅ Users Sent: {sent_users}\n\n"
+        f"👥 Groups: {total_groups}\n"
+        f"✅ Groups Sent: {sent_groups}\n\n"
         f"❌ Failed: {failed}"
     )
 
 
-# =========================================================
+# ============================================================
 # BOT ADDED TO GROUP
-# =========================================================
+# ============================================================
 
 @app.on_message(
     filters.new_chat_members
 )
-async def bot_added(
-    client,
-    message,
-):
+async def bot_added(client, message):
 
     try:
 
@@ -900,47 +983,51 @@ async def bot_added(
             if member.id != me.id:
                 continue
 
-            await db.save_chat(
+            await save_chat(
                 message.chat
             )
 
-            # Group is OFF by default.
+            # ------------------------------------------------
+            # GROUP DEFAULT OFF
+            # ------------------------------------------------
+
             if message.chat.type in (
                 enums.ChatType.GROUP,
-                enums.ChatType.SUPERGROUP,
+                enums.ChatType.SUPERGROUP
             ):
 
                 await db.set_group_approval(
                     message.chat.id,
-                    False,
+                    False
                 )
 
                 await message.reply_text(
-                    "🤖 Bot added successfully.\n\n"
-                    "🔴 Group auto approval is OFF.\n\n"
-                    "Use:\n"
+                    "🤖 AUTO APPROVE BOT\n\n"
+                    "🔴 Group Auto Approval: OFF\n\n"
+                    "Enable with:\n"
                     "/approve on\n\n"
-                    "to enable auto approval.\n\n"
-                    "📢 Channel join requests are "
+                    "Disable with:\n"
+                    "/approve off\n\n"
+                    "📢 Channel requests are "
                     "approved automatically."
                 )
 
     except Exception as e:
 
-        LOGGER.warning(
-            "Bot added handler error: %s",
-            e,
+        LOGGER.error(
+            "Bot added error: %s",
+            e
         )
 
 
-# =========================================================
-# START BOT
-# =========================================================
+# ============================================================
+# START
+# ============================================================
 
 if __name__ == "__main__":
 
     LOGGER.info(
-        "Auto Join Request Bot starting..."
+        "AUTO APPROVE BOT STARTING..."
     )
 
     app.run()
