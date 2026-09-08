@@ -26,11 +26,30 @@ async def start_broadcast(
     group_success = 0
     group_failed = 0
 
-    users = await get_all_users()
-    groups = await get_all_groups()
+    # =====================================================
+    # GET USERS + GROUPS
+    # =====================================================
+
+    try:
+
+        users = await get_all_users()
+        groups = await get_all_groups()
+
+    except Exception as e:
+
+        logging.exception(
+            f"Database error: {e}"
+        )
+
+        return await status_message.edit_text(
+            f"❌ **Database Error**\n\n"
+            f"`{e}`"
+        )
+
 
     total_users = len(users)
     total_groups = len(groups)
+
 
     if total_users == 0 and total_groups == 0:
 
@@ -40,11 +59,15 @@ async def start_broadcast(
         )
 
 
+    # =====================================================
+    # START MESSAGE
+    # =====================================================
+
     await status_message.edit_text(
         "📢 **Broadcast Started**\n\n"
         f"👤 Users: `{total_users:,}`\n"
         f"👥 Groups: `{total_groups:,}`\n\n"
-        "⏳ Sending..."
+        "⏳ Please wait..."
     )
 
 
@@ -54,7 +77,9 @@ async def start_broadcast(
 
     for user in users:
 
-        user_id = user.get("user_id")
+        user_id = user.get(
+            "user_id"
+        )
 
         if not user_id:
             continue
@@ -67,7 +92,9 @@ async def start_broadcast(
 
             user_success += 1
 
-            await asyncio.sleep(0.08)
+            await asyncio.sleep(
+                0.10
+            )
 
 
         except FloodWait as e:
@@ -88,13 +115,13 @@ async def start_broadcast(
 
                 user_success += 1
 
-            except Exception as error:
+            except Exception as retry_error:
 
                 user_failed += 1
 
                 logging.error(
                     f"User retry failed "
-                    f"{user_id}: {error}"
+                    f"{user_id}: {retry_error}"
                 )
 
 
@@ -104,17 +131,15 @@ async def start_broadcast(
 
             error_text = str(e).lower()
 
-            # Remove users who are no longer reachable
             if any(
-                x in error_text
-                for x in [
+                word in error_text
+                for word in (
                     "user is blocked",
                     "peer id invalid",
                     "input user deactivated",
                     "user deactivated",
-                    "user not found",
-                    "chat not found"
-                ]
+                    "user not found"
+                )
             ):
 
                 try:
@@ -139,7 +164,9 @@ async def start_broadcast(
 
     for group in groups:
 
-        chat_id = group.get("chat_id")
+        chat_id = group.get(
+            "chat_id"
+        )
 
         if not chat_id:
             continue
@@ -152,7 +179,9 @@ async def start_broadcast(
 
             group_success += 1
 
-            await asyncio.sleep(0.15)
+            await asyncio.sleep(
+                0.15
+            )
 
 
         except FloodWait as e:
@@ -173,13 +202,13 @@ async def start_broadcast(
 
                 group_success += 1
 
-            except Exception as error:
+            except Exception as retry_error:
 
                 group_failed += 1
 
                 logging.error(
                     f"Group retry failed "
-                    f"{chat_id}: {error}"
+                    f"{chat_id}: {retry_error}"
                 )
 
 
@@ -206,6 +235,7 @@ async def start_broadcast(
         user_failed +
         group_failed
     )
+
 
     await status_message.edit_text(
         "✅ **BROADCAST COMPLETED**\n\n"
