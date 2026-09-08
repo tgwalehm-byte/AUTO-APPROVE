@@ -56,7 +56,7 @@ async def set_auto_approve(
 
 
 # =========================================================
-# GLOBAL AD
+# ADVERTISEMENT
 # =========================================================
 
 async def get_ad():
@@ -71,7 +71,9 @@ async def get_ad():
     return data.get("text")
 
 
-async def save_ad(text: str):
+async def save_ad(
+    text: str
+):
 
     await ads_collection.update_one(
         {"_id": "global_ad"},
@@ -248,15 +250,4 @@ async def delete_request(
             "chat_id": chat_id,
             "user_id": user_id
         }
-    )
-
-
-async def clear_request(
-    chat_id: int,
-    user_id: int
-):
-
-    await delete_request(
-        chat_id,
-        user_id
     )
