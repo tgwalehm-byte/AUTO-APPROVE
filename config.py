@@ -2,17 +2,27 @@ import os
 
 
 def get_env(name: str, default: str = "") -> str:
-    return os.environ.get(name, default).strip()
+    return os.getenv(name, default).strip()
 
 
+# Telegram
 API_ID = int(get_env("API_ID", "0"))
 API_HASH = get_env("API_HASH")
 BOT_TOKEN = get_env("BOT_TOKEN")
+
+
+# Bot owner
 OWNER_ID = int(get_env("OWNER_ID", "0"))
+
+
+# MongoDB
 MONGO_URL = get_env("MONGO_URL")
 
 
-# Basic validation
+# ------------------------------------------------------------
+# Validation
+# ------------------------------------------------------------
+
 missing = []
 
 if API_ID <= 0:
@@ -33,5 +43,6 @@ if not MONGO_URL:
 
 if missing:
     raise RuntimeError(
-        "Missing environment variables: " + ", ".join(missing)
+        "Missing Config Vars: "
+        + ", ".join(missing)
     )
