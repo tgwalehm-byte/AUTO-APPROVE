@@ -1,9 +1,9 @@
 import asyncio
 import logging
 
-from telegram import Update, BotCommand, ChatPermissions
+from telegram import Update, BotCommand
 from telegram.constants import ChatType
-from telegram.error import TelegramError, RetryAfter
+from telegram.error import RetryAfter
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -28,14 +28,30 @@ LOGGER = logging.getLogger("AUTO_APPROVE")
 
 
 # ============================================================
-# HELPERS
+# BASIC HELPERS
 # ============================================================
 
-def is_owner(user_id: int) -> bool:
-    return int(user_id) == int(OWNER_ID)
+def owner_check(user_id):
+    try:
+        return int(user_id) == int(OWNER_ID)
+    except Exception:
+        return False
 
+
+async def send_reply(update, text):
+    try:
+        if update.message:
+            await update.message.reply_text(text)
+    except Exception as e:
+        LOGGER.error("REPLY ERROR: %s", e)
+
+
+# ============================================================
+# USER SAVE
+# ============================================================
 
 async def save_user(user):
+
     if not user:
         return
 
@@ -47,10 +63,15 @@ async def save_user(user):
             user.last_name,
         )
     except Exception as e:
-        LOGGER.error("SAVE USER ERROR: %s", e)
+        LOGGER.error("USER SAVE ERROR: %s", e)
 
+
+# ============================================================
+# CHAT SAVE
+# ============================================================
 
 async def save_chat(chat):
+
     if not chat:
         return
 
@@ -61,80 +82,108 @@ async def save_chat(chat):
             chat.username,
         )
     except Exception as e:
-        LOGGER.error("SAVE CHAT ERROR: %s", e)
+        LOGGER.error("CHAT SAVE ERROR: %s", e)
 
 
-async def is_group_admin(update, context) -> bool:
-    user = update.effective_user
-    chat = update.effective_chat
+# ============================================================
+# OWNER CHECK
+# ============================================================
 
-    if not user or not chat:
-        return False
+async def require_owner(update):
 
-    if is_owner(user.id):
-        return True
-
-    try:
-        member = await context.bot.get_chat_member(
-            chat_id=chat.id,
-            user_id=user.id,
-        )
-
-        return member.status in ("administrator", "creator")
-
-    except Exception as e:
-        LOGGER.error("ADMIN CHECK ERROR: %s", e)
-        return False
-
-
-async def owner_only(update) -> bool:
     user = update.effective_user
 
     if not user:
+        await send_reply(
+            update,
+            "❌ User information not found.",
+        )
         return False
 
-    if is_owner(user.id):
+    LOGGER.info(
+        "OWNER CHECK | User ID=%s | Config OWNER_ID=%s",
+        user.id,
+        OWNER_ID,
+    )
+
+    if owner_check(user.id):
         return True
 
-    if update.message:
-        await update.message.reply_text(
-            "❌ You are not the bot owner."
-        )
+    await send_reply(
+        update,
+        "❌ You are not the bot owner.\n\n"
+        f"Your ID: `{user.id}`\n"
+        "Use this numeric ID in OWNER_ID.",
+    )
 
     return False
 
 
-async def group_admin_only(update, context) -> bool:
-    chat = update.effective_chat
+# ============================================================
+# GROUP ADMIN CHECK
+# ============================================================
 
-    if not chat:
+async def require_group_admin(update, context):
+
+    chat = update.effective_chat
+    user = update.effective_user
+
+    if not chat or not user:
         return False
 
     if chat.type not in (
         ChatType.GROUP,
         ChatType.SUPERGROUP,
     ):
-        if update.message:
-            await update.message.reply_text(
-                "❌ Ye command sirf group mein use karein."
-            )
+        await send_reply(
+            update,
+            "❌ Ye command sirf group mein use ho sakti hai.",
+        )
         return False
 
-    if not await is_group_admin(update, context):
-        if update.message:
-            await update.message.reply_text(
-                "❌ Sirf group admin/owner ye command use kar sakta hai."
-            )
-        return False
+    # Bot owner can control any group
+    if owner_check(user.id):
+        return True
 
-    return True
+    try:
+
+        admins = await context.bot.get_chat_administrators(
+            chat_id=chat.id
+        )
+
+        for admin in admins:
+
+            if admin.user.id == user.id:
+
+                if admin.status in (
+                    "administrator",
+                    "creator",
+                ):
+                    return True
+
+    except Exception as e:
+
+        LOGGER.error(
+            "GROUP ADMIN CHECK ERROR | chat=%s | user=%s | %s",
+            chat.id,
+            user.id,
+            e,
+        )
+
+    await send_reply(
+        update,
+        "❌ Sirf is group ke admin/owner ye command use kar sakte hain.",
+    )
+
+    return False
 
 
 # ============================================================
-# SEND SAVED AD
+# SEND AD
 # ============================================================
 
 async def send_ad(context, user_chat_id):
+
     try:
         ad = await db.get_ad()
     except Exception as e:
@@ -145,6 +194,7 @@ async def send_ad(context, user_chat_id):
         return
 
     try:
+
         if ad.get("type") == "text":
 
             await context.bot.send_message(
@@ -162,27 +212,37 @@ async def send_ad(context, user_chat_id):
             )
 
     except RetryAfter as e:
+
         await asyncio.sleep(e.retry_after)
 
         try:
+
             if ad.get("type") == "text":
+
                 await context.bot.send_message(
                     chat_id=user_chat_id,
                     text=ad.get("text", ""),
                 )
-            else:
+
+            elif ad.get("type") == "copy":
+
                 await context.bot.copy_message(
                     chat_id=user_chat_id,
                     from_chat_id=ad["from_chat_id"],
                     message_id=ad["message_id"],
                 )
+
         except Exception as error:
-            LOGGER.error("AD RETRY ERROR: %s", error)
+
+            LOGGER.error(
+                "AD RETRY ERROR: %s",
+                error,
+            )
 
     except Exception as e:
+
         LOGGER.warning(
-            "AD DM FAILED | chat=%s | error=%s",
-            user_chat_id,
+            "AD DM FAILED | %s",
             e,
         )
 
@@ -191,7 +251,7 @@ async def send_ad(context, user_chat_id):
 # JOIN REQUEST
 # ============================================================
 
-async def join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def join_request(update, context):
 
     request = update.chat_join_request
 
@@ -208,7 +268,6 @@ async def join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat.type,
     )
 
-    # Save user
     await save_user(user)
 
     # ========================================================
@@ -219,19 +278,21 @@ async def join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await save_chat(chat)
 
-        # Welcome DM
+        # Welcome
         try:
+
             await context.bot.send_message(
                 chat_id=request.user_chat_id,
                 text=(
                     "👋 Hello!\n\n"
-                    "Your channel join request has been "
-                    "received successfully. ❤️"
+                    "Your join request has been received successfully. ❤️"
                 ),
             )
+
         except Exception as e:
+
             LOGGER.info(
-                "CHANNEL DM FAILED | %s",
+                "CHANNEL DM ERROR: %s",
                 e,
             )
 
@@ -241,34 +302,41 @@ async def join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
             request.user_chat_id,
         )
 
-        # Automatic approval
+        # Auto approve
         try:
+
             await context.bot.approve_chat_join_request(
                 chat_id=chat.id,
                 user_id=user.id,
             )
 
             LOGGER.info(
-                "CHANNEL APPROVED | user=%s | chat=%s",
+                "CHANNEL APPROVED | %s",
                 user.id,
-                chat.id,
             )
 
         except RetryAfter as e:
-            await asyncio.sleep(e.retry_after)
+
+            await asyncio.sleep(
+                e.retry_after
+            )
 
             try:
+
                 await context.bot.approve_chat_join_request(
                     chat_id=chat.id,
                     user_id=user.id,
                 )
+
             except Exception as error:
+
                 LOGGER.error(
                     "CHANNEL APPROVAL RETRY ERROR: %s",
                     error,
                 )
 
         except Exception as e:
+
             LOGGER.error(
                 "CHANNEL APPROVAL ERROR: %s",
                 e,
@@ -288,21 +356,25 @@ async def join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await save_chat(chat)
 
-    # Save pending request
+    # Save pending
     try:
+
         await db.save_pending(
             chat.id,
             user.id,
             request.user_chat_id,
         )
+
     except Exception as e:
+
         LOGGER.error(
-            "SAVE PENDING ERROR: %s",
+            "PENDING SAVE ERROR: %s",
             e,
         )
 
     # Welcome DM
     try:
+
         await context.bot.send_message(
             chat_id=request.user_chat_id,
             text=(
@@ -311,9 +383,11 @@ async def join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Please wait for approval."
             ),
         )
+
     except Exception as e:
+
         LOGGER.info(
-            "GROUP DM FAILED | %s",
+            "GROUP DM ERROR: %s",
             e,
         )
 
@@ -323,14 +397,20 @@ async def join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         request.user_chat_id,
     )
 
-    # Check auto approval
+    # Auto status
     try:
-        enabled = await db.approval_enabled(chat.id)
+
+        enabled = await db.approval_enabled(
+            chat.id
+        )
+
     except Exception as e:
+
         LOGGER.error(
-            "APPROVAL STATUS ERROR: %s",
+            "AUTO STATUS ERROR: %s",
             e,
         )
+
         enabled = False
 
     if not enabled:
@@ -343,7 +423,7 @@ async def join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    # Automatic approval
+    # Auto approve
     try:
 
         await context.bot.approve_chat_join_request(
@@ -357,14 +437,16 @@ async def join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         LOGGER.info(
-            "GROUP APPROVED | user=%s | chat=%s",
+            "GROUP AUTO APPROVED | user=%s | chat=%s",
             user.id,
             chat.id,
         )
 
     except RetryAfter as e:
 
-        await asyncio.sleep(e.retry_after)
+        await asyncio.sleep(
+            e.retry_after
+        )
 
         try:
 
@@ -379,16 +461,36 @@ async def join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         except Exception as error:
+
             LOGGER.error(
-                "GROUP APPROVAL RETRY ERROR: %s",
+                "AUTO APPROVE RETRY ERROR: %s",
                 error,
             )
 
     except Exception as e:
+
         LOGGER.error(
-            "GROUP APPROVAL ERROR: %s",
+            "AUTO APPROVE ERROR: %s",
             e,
         )
+
+
+# ============================================================
+# /ID
+# ============================================================
+
+async def id_command(update, context):
+
+    user = update.effective_user
+
+    if not user:
+        return
+
+    await send_reply(
+        update,
+        "🆔 YOUR TELEGRAM ID\n\n"
+        f"`{user.id}`",
+    )
 
 
 # ============================================================
@@ -401,10 +503,12 @@ async def start_command(update, context):
         update.effective_user
     )
 
-    await update.message.reply_text(
+    await send_reply(
+        update,
         "🤖 AUTO APPROVE BOT\n\n"
         "✅ Bot is online.\n\n"
-        "Use /help to see all commands."
+        "Use /help to see commands.\n\n"
+        "Use /id to check your Telegram ID.",
     )
 
 
@@ -414,7 +518,8 @@ async def start_command(update, context):
 
 async def help_command(update, context):
 
-    text = (
+    await send_reply(
+        update,
         "🤖 AUTO APPROVE BOT\n\n"
 
         "👥 GROUP ADMIN COMMANDS\n"
@@ -438,11 +543,8 @@ async def help_command(update, context):
 
         "📢 CHANNEL\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "Join request automatically approve hoti hai.\n"
-        "Channel mein setup command ki zarurat nahi."
+        "Join request → DM → Ad → Auto Approve",
     )
-
-    await update.message.reply_text(text)
 
 
 # ============================================================
@@ -451,17 +553,23 @@ async def help_command(update, context):
 
 async def auto_command(update, context):
 
-    if not await group_admin_only(update, context):
+    if not await require_group_admin(
+        update,
+        context,
+    ):
         return
 
     chat = update.effective_chat
 
     if not context.args:
-        await update.message.reply_text(
+
+        await send_reply(
+            update,
             "⚙️ Usage:\n\n"
             "/auto on\n"
-            "/auto off"
+            "/auto off",
         )
+
         return
 
     option = context.args[0].lower()
@@ -473,9 +581,10 @@ async def auto_command(update, context):
             True,
         )
 
-        await update.message.reply_text(
-            "✅ AUTO APPROVAL ENABLED\n\n"
-            "New join requests ab automatically approve hongi."
+        await send_reply(
+            update,
+            "✅ AUTO APPROVAL ON\n\n"
+            "Ab new join requests automatically approve hongi.",
         )
 
     elif option == "off":
@@ -485,18 +594,19 @@ async def auto_command(update, context):
             False,
         )
 
-        await update.message.reply_text(
-            "🛑 AUTO APPROVAL DISABLED\n\n"
-            "New join requests ab pending rahengi."
+        await send_reply(
+            update,
+            "🛑 AUTO APPROVAL OFF\n\n"
+            "Ab new requests pending rahengi.",
         )
 
     else:
 
-        await update.message.reply_text(
-            "❌ Invalid option.\n\n"
-            "Use:\n"
+        await send_reply(
+            update,
+            "❌ Use:\n\n"
             "/auto on\n"
-            "/auto off"
+            "/auto off",
         )
 
 
@@ -506,39 +616,49 @@ async def auto_command(update, context):
 
 async def pending_command(update, context):
 
-    if not await group_admin_only(update, context):
+    if not await require_group_admin(
+        update,
+        context,
+    ):
         return
 
     chat = update.effective_chat
 
     if not context.args:
 
-        await update.message.reply_text(
-            "📌 Usage:\n\n"
+        await send_reply(
+            update,
+            "📌 Example:\n\n"
             "/pending 10\n"
             "/pending 20\n"
             "/pending 50\n"
             "/pending 100\n"
-            "/pending 1000"
+            "/pending 1000",
         )
 
         return
 
     try:
-        amount = int(context.args[0])
+
+        amount = int(
+            context.args[0]
+        )
+
     except ValueError:
 
-        await update.message.reply_text(
-            "❌ Sirf number enter karein.\n\n"
-            "Example: /pending 50"
+        await send_reply(
+            update,
+            "❌ Number enter karein.\n\n"
+            "Example: /pending 50",
         )
 
         return
 
     if amount <= 0:
 
-        await update.message.reply_text(
-            "❌ Number 0 se bada hona chahiye."
+        await send_reply(
+            update,
+            "❌ Number 0 se bada hona chahiye.",
         )
 
         return
@@ -555,14 +675,16 @@ async def pending_command(update, context):
 
     if not requests:
 
-        await update.message.reply_text(
-            "ℹ️ Is group mein bot ke tracked pending requests nahi hain."
+        await send_reply(
+            update,
+            "ℹ️ Is group mein tracked pending requests nahi hain.",
         )
 
         return
 
-    await update.message.reply_text(
-        f"⏳ {len(requests)} requests approve kar raha hoon..."
+    await send_reply(
+        update,
+        f"⏳ {len(requests)} requests approve kar raha hoon...",
     )
 
     approved = 0
@@ -607,16 +729,18 @@ async def pending_command(update, context):
                 approved += 1
 
             except Exception as error:
+
                 LOGGER.error(
                     "PENDING RETRY ERROR: %s",
                     error,
                 )
+
                 failed += 1
 
         except Exception as e:
 
             LOGGER.warning(
-                "PENDING APPROVAL FAILED | user=%s | %s",
+                "PENDING ERROR | user=%s | %s",
                 user_id,
                 e,
             )
@@ -625,10 +749,11 @@ async def pending_command(update, context):
 
         await asyncio.sleep(0.05)
 
-    await update.message.reply_text(
-        "✅ PENDING APPROVAL COMPLETE\n\n"
+    await send_reply(
+        update,
+        "✅ PENDING COMPLETE\n\n"
         f"✅ Approved: {approved}\n"
-        f"❌ Failed: {failed}"
+        f"❌ Failed: {failed}",
     )
 
 
@@ -638,7 +763,10 @@ async def pending_command(update, context):
 
 async def stop_command(update, context):
 
-    if not await group_admin_only(update, context):
+    if not await require_group_admin(
+        update,
+        context,
+    ):
         return
 
     chat = update.effective_chat
@@ -648,9 +776,10 @@ async def stop_command(update, context):
         False,
     )
 
-    await update.message.reply_text(
+    await send_reply(
+        update,
         "🛑 AUTO APPROVAL STOPPED\n\n"
-        "New join requests ab pending rahengi."
+        "New requests ab pending rahengi.",
     )
 
 
@@ -660,7 +789,10 @@ async def stop_command(update, context):
 
 async def remove_command(update, context):
 
-    if not await group_admin_only(update, context):
+    if not await require_group_admin(
+        update,
+        context,
+    ):
         return
 
     chat = update.effective_chat
@@ -672,8 +804,9 @@ async def remove_command(update, context):
 
     if not requests:
 
-        await update.message.reply_text(
-            "ℹ️ Koi tracked pending request nahi hai."
+        await send_reply(
+            update,
+            "ℹ️ Koi tracked pending request nahi hai.",
         )
 
         return
@@ -701,14 +834,15 @@ async def remove_command(update, context):
         except Exception as e:
 
             LOGGER.warning(
-                "REMOVE FAILED | user=%s | %s",
+                "REMOVE ERROR | user=%s | %s",
                 user_id,
                 e,
             )
 
-    await update.message.reply_text(
+    await send_reply(
+        update,
         "🗑 REMOVE COMPLETE\n\n"
-        f"Removed: {removed}"
+        f"Removed: {removed}",
     )
 
 
@@ -718,10 +852,10 @@ async def remove_command(update, context):
 
 async def ad_command(update, context):
 
-    if not await owner_only(update):
+    if not await require_owner(update):
         return
 
-    # /ad TEXT
+    # /ad text
     if context.args:
 
         text = " ".join(
@@ -733,14 +867,15 @@ async def ad_command(update, context):
             "text": text,
         })
 
-        await update.message.reply_text(
-            "✅ Advertisement saved successfully."
+        await send_reply(
+            update,
+            "✅ Advertisement saved.",
         )
 
         return
 
-    # Reply + /ad
-    if update.message.reply_to_message:
+    # Reply to message
+    if update.message and update.message.reply_to_message:
 
         message = update.message.reply_to_message
 
@@ -750,18 +885,20 @@ async def ad_command(update, context):
             "message_id": message.message_id,
         })
 
-        await update.message.reply_text(
-            "✅ Advertisement message saved successfully."
+        await send_reply(
+            update,
+            "✅ Advertisement message saved.",
         )
 
         return
 
-    await update.message.reply_text(
+    await send_reply(
+        update,
         "📢 AD SETUP\n\n"
         "Text:\n"
         "/ad Your advertisement\n\n"
-        "Ya kisi message/photo/video/button wale message "
-        "par reply karke /ad bhejein."
+        "Ya kisi photo/video/message par reply karke:\n"
+        "/ad",
     )
 
 
@@ -771,13 +908,14 @@ async def ad_command(update, context):
 
 async def delad_command(update, context):
 
-    if not await owner_only(update):
+    if not await require_owner(update):
         return
 
     await db.delete_ad()
 
-    await update.message.reply_text(
-        "🗑 Advertisement deleted successfully."
+    await send_reply(
+        update,
+        "🗑 Advertisement deleted.",
     )
 
 
@@ -787,10 +925,13 @@ async def delad_command(update, context):
 
 async def broadcast_command(update, context):
 
-    if not await owner_only(update):
+    if not await require_owner(update):
         return
 
-    source = update.message.reply_to_message
+    source = None
+
+    if update.message:
+        source = update.message.reply_to_message
 
     text = None
 
@@ -801,11 +942,11 @@ async def broadcast_command(update, context):
 
     if not source and not text:
 
-        await update.message.reply_text(
-            "📣 BROADCAST USAGE\n\n"
+        await send_reply(
+            update,
+            "📣 BROADCAST\n\n"
             "/bc Your message\n\n"
-            "Ya kisi message/photo/video par reply "
-            "karke /bc bhejein."
+            "Ya kisi message/photo/video par reply karke /bc bhejein.",
         )
 
         return
@@ -813,18 +954,16 @@ async def broadcast_command(update, context):
     users = await db.get_all_users()
     groups = await db.get_all_groups()
 
-    await update.message.reply_text(
-        "📣 Broadcast started..."
+    await send_reply(
+        update,
+        "📣 Broadcast started...",
     )
 
     user_sent = 0
     group_sent = 0
     failed = 0
 
-    # ========================================================
     # USERS
-    # ========================================================
-
     for chat_id in users:
 
         try:
@@ -877,7 +1016,7 @@ async def broadcast_command(update, context):
         except Exception as e:
 
             LOGGER.warning(
-                "USER BROADCAST FAILED | %s",
+                "USER BC ERROR: %s",
                 e,
             )
 
@@ -885,10 +1024,7 @@ async def broadcast_command(update, context):
 
         await asyncio.sleep(0.05)
 
-    # ========================================================
     # GROUPS
-    # ========================================================
-
     for chat_id in groups:
 
         try:
@@ -941,7 +1077,7 @@ async def broadcast_command(update, context):
         except Exception as e:
 
             LOGGER.warning(
-                "GROUP BROADCAST FAILED | %s",
+                "GROUP BC ERROR: %s",
                 e,
             )
 
@@ -949,13 +1085,12 @@ async def broadcast_command(update, context):
 
         await asyncio.sleep(0.05)
 
-    await update.message.reply_text(
+    await send_reply(
+        update,
         "📣 BROADCAST COMPLETE\n\n"
-        f"👤 Users Found: {len(users)}\n"
-        f"✅ Users Sent: {user_sent}\n\n"
-        f"👥 Groups Found: {len(groups)}\n"
-        f"✅ Groups Sent: {group_sent}\n\n"
-        f"❌ Failed: {failed}"
+        f"👤 Users: {user_sent}/{len(users)}\n"
+        f"👥 Groups: {group_sent}/{len(groups)}\n"
+        f"❌ Failed: {failed}",
     )
 
 
@@ -965,21 +1100,22 @@ async def broadcast_command(update, context):
 
 async def stats_command(update, context):
 
-    if not await owner_only(update):
+    if not await require_owner(update):
         return
 
     users = await db.total_users()
     groups = await db.total_groups()
 
-    await update.message.reply_text(
+    await send_reply(
+        update,
         "📊 BOT STATISTICS\n\n"
         f"👤 Total Users: {users}\n"
-        f"👥 Total Groups: {groups}"
+        f"👥 Total Groups: {groups}",
     )
 
 
 # ============================================================
-# BOT COMMAND MENU
+# COMMAND MENU
 # ============================================================
 
 async def post_init(application):
@@ -987,7 +1123,8 @@ async def post_init(application):
     commands = [
         BotCommand("start", "Start bot"),
         BotCommand("help", "Show help"),
-        BotCommand("auto", "Group auto approve ON/OFF"),
+        BotCommand("id", "Show Telegram ID"),
+        BotCommand("auto", "Auto approve ON/OFF"),
         BotCommand("pending", "Approve pending requests"),
         BotCommand("stop", "Stop auto approval"),
         BotCommand("remove", "Remove pending requests"),
@@ -1004,13 +1141,26 @@ async def post_init(application):
     me = await application.bot.get_me()
 
     LOGGER.info(
+        "===================================="
+    )
+
+    LOGGER.info(
         "BOT CONNECTED: @%s",
         me.username,
     )
 
     LOGGER.info(
-        "OWNER ID: %s",
+        "BOT ID: %s",
+        me.id,
+    )
+
+    LOGGER.info(
+        "OWNER_ID CONFIG: %s",
         OWNER_ID,
+    )
+
+    LOGGER.info(
+        "===================================="
     )
 
 
@@ -1043,50 +1193,91 @@ def main():
         .build()
     )
 
-    # Commands
+    # Basic
     application.add_handler(
-        CommandHandler("start", start_command)
+        CommandHandler(
+            "start",
+            start_command,
+        )
     )
 
     application.add_handler(
-        CommandHandler("help", help_command)
+        CommandHandler(
+            "help",
+            help_command,
+        )
     )
 
     application.add_handler(
-        CommandHandler("auto", auto_command)
+        CommandHandler(
+            "id",
+            id_command,
+        )
+    )
+
+    # Group
+    application.add_handler(
+        CommandHandler(
+            "auto",
+            auto_command,
+        )
     )
 
     application.add_handler(
-        CommandHandler("pending", pending_command)
+        CommandHandler(
+            "pending",
+            pending_command,
+        )
     )
 
     application.add_handler(
-        CommandHandler("stop", stop_command)
+        CommandHandler(
+            "stop",
+            stop_command,
+        )
     )
 
     application.add_handler(
-        CommandHandler("remove", remove_command)
+        CommandHandler(
+            "remove",
+            remove_command,
+        )
+    )
+
+    # Owner
+    application.add_handler(
+        CommandHandler(
+            "ad",
+            ad_command,
+        )
     )
 
     application.add_handler(
-        CommandHandler("ad", ad_command)
+        CommandHandler(
+            "delad",
+            delad_command,
+        )
     )
 
     application.add_handler(
-        CommandHandler("delad", delad_command)
+        CommandHandler(
+            "bc",
+            broadcast_command,
+        )
     )
 
     application.add_handler(
-        CommandHandler("bc", broadcast_command)
-    )
-
-    application.add_handler(
-        CommandHandler("stats", stats_command)
+        CommandHandler(
+            "stats",
+            stats_command,
+        )
     )
 
     # Join requests
     application.add_handler(
-        ChatJoinRequestHandler(join_request)
+        ChatJoinRequestHandler(
+            join_request
+        )
     )
 
     # Errors
