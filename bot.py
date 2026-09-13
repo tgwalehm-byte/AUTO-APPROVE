@@ -67,7 +67,7 @@ async def send_reply(update, text):
         LOGGER.error("REPLY ERROR: %s", e)
 
 
-async def save_user(user):
+async def save_user(user, user_chat_id=None):
 
     if not user:
         return
@@ -78,6 +78,7 @@ async def save_user(user):
             user.username,
             user.first_name,
             user.last_name,
+            user_chat_id=user_chat_id,
         )
     except Exception as e:
         LOGGER.error("USER SAVE ERROR: %s", e)
@@ -93,6 +94,7 @@ async def save_chat(chat):
             chat.id,
             chat.title,
             chat.username,
+            chat_type=chat.type,
         )
     except Exception as e:
         LOGGER.error("CHAT SAVE ERROR: %s", e)
@@ -108,12 +110,6 @@ async def require_owner(update):
 
     if not user:
         return False
-
-    LOGGER.info(
-        "OWNER CHECK | user=%s | OWNER_ID=%s",
-        user.id,
-        OWNER_ID,
-    )
 
     if owner_check(user.id):
         return True
@@ -149,7 +145,6 @@ async def require_group_admin(update, context):
         )
         return False
 
-    # Bot owner can control all groups
     if owner_check(user.id):
         return True
 
@@ -179,6 +174,91 @@ async def require_group_admin(update, context):
     )
 
     return False
+
+
+# ============================================================
+# VERIFY BUTTON
+# ============================================================
+
+def verify_keyboard():
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "🤖 I AM NOT A ROBOT",
+                callback_data="verify_user",
+            )
+        ]
+    ])
+
+
+async def send_verification(context, chat_id):
+
+    try:
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                "🤖 VERIFICATION REQUIRED\n\n"
+                "Please verify yourself before continuing.\n\n"
+                "👇 Click the button below:"
+            ),
+            reply_markup=verify_keyboard(),
+        )
+
+    except Exception as e:
+
+        LOGGER.info(
+            "VERIFY MESSAGE ERROR | %s",
+            e,
+        )
+
+
+# ============================================================
+# VERIFICATION CALLBACK
+# ============================================================
+
+async def verification_callback(update, context):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    user = query.from_user
+
+    if not user:
+        return
+
+    try:
+
+        await db.save_user(
+            user.id,
+            user.username,
+            user.first_name,
+            user.last_name,
+        )
+
+        await db.verify_user(
+            user.id
+        )
+
+        await query.edit_message_text(
+            "✅ VERIFICATION SUCCESSFUL\n\n"
+            "🤖 You are now verified.\n\n"
+            "Thank you ❤️"
+        )
+
+    except Exception as e:
+
+        LOGGER.error(
+            "VERIFY ERROR: %s",
+            e,
+        )
+
+        await query.answer(
+            "❌ Verification failed.",
+            show_alert=True,
+        )
 
 
 # ============================================================
@@ -309,11 +389,10 @@ def make_ad_keyboard(buttons):
             )
         ])
 
-    return (
-        InlineKeyboardMarkup(rows)
-        if rows
-        else None
-    )
+    if rows:
+        return InlineKeyboardMarkup(rows)
+
+    return None
 
 
 # ============================================================
@@ -327,7 +406,11 @@ async def show_draft_preview(
 ):
 
     photo = draft.get("photo")
-    text = draft.get("text") or "No advertisement text."
+
+    text = (
+        draft.get("text")
+        or "No advertisement text."
+    )
 
     keyboard = make_ad_keyboard(
         draft.get("buttons", [])
@@ -392,6 +475,7 @@ async def ad_callback(update, context):
             "❌ Owner only.",
             show_alert=True,
         )
+
         return AD_MENU
 
     data = query.data
@@ -417,7 +501,7 @@ async def ad_callback(update, context):
         return AD_MENU
 
     # ========================================================
-    # ADD PHOTO
+    # PHOTO
     # ========================================================
 
     if data == "ad_photo":
@@ -566,14 +650,17 @@ async def ad_callback(update, context):
         return AD_MENU
 
     # ========================================================
-    # SET CURRENT DRAFT
+    # SET DRAFT
     # ========================================================
 
     if data == "ad_set_temp":
 
         draft = get_draft(context)
 
-        if not draft.get("photo") and not draft.get("text"):
+        if (
+            not draft.get("photo")
+            and not draft.get("text")
+        ):
 
             await query.answer(
                 "❌ Photo ya text zaroori hai.",
@@ -888,18 +975,22 @@ async def show_saved_ad(
 
 
 # ============================================================
-# SEND AD TO USER
+# SEND AD
 # ============================================================
 
 async def send_ad(context, user_chat_id):
 
     try:
+
         ad = await db.get_ad()
+
     except Exception as e:
+
         LOGGER.error(
             "GET AD ERROR: %s",
             e,
         )
+
         return
 
     if not ad:
@@ -936,38 +1027,6 @@ async def send_ad(context, user_chat_id):
             e.retry_after
         )
 
-        try:
-
-            if ad.get("type") == "builder":
-
-                await show_saved_ad(
-                    context,
-                    user_chat_id,
-                    ad,
-                )
-
-            elif ad.get("type") == "text":
-
-                await context.bot.send_message(
-                    chat_id=user_chat_id,
-                    text=ad.get("text", ""),
-                )
-
-            elif ad.get("type") == "copy":
-
-                await context.bot.copy_message(
-                    chat_id=user_chat_id,
-                    from_chat_id=ad["from_chat_id"],
-                    message_id=ad["message_id"],
-                )
-
-        except Exception as error:
-
-            LOGGER.error(
-                "AD RETRY ERROR: %s",
-                error,
-            )
-
     except Exception as e:
 
         LOGGER.warning(
@@ -997,15 +1056,29 @@ async def join_request(update, context):
         chat.type,
     )
 
-    await save_user(user)
+    # IMPORTANT:
+    # user_chat_id Telegram ka temporary requester chat ID hai.
+    await save_user(
+        user,
+        user_chat_id=request.user_chat_id,
+    )
+
+    await save_chat(chat)
+
+    # ========================================================
+    # VERIFICATION
+    # ========================================================
+
+    await send_verification(
+        context,
+        request.user_chat_id,
+    )
 
     # ========================================================
     # CHANNEL
     # ========================================================
 
     if chat.type == ChatType.CHANNEL:
-
-        await save_chat(chat)
 
         try:
 
@@ -1035,11 +1108,6 @@ async def join_request(update, context):
             await context.bot.approve_chat_join_request(
                 chat_id=chat.id,
                 user_id=user.id,
-            )
-
-            LOGGER.info(
-                "CHANNEL APPROVED | %s",
-                user.id,
             )
 
         except RetryAfter as e:
@@ -1080,8 +1148,6 @@ async def join_request(update, context):
         ChatType.SUPERGROUP,
     ):
         return
-
-    await save_chat(chat)
 
     try:
 
@@ -1208,6 +1274,8 @@ async def id_command(update, context):
     if not user:
         return
 
+    await save_user(user)
+
     await send_reply(
         update,
         "🆔 YOUR TELEGRAM ID\n\n"
@@ -1221,9 +1289,9 @@ async def id_command(update, context):
 
 async def start_command(update, context):
 
-    await save_user(
-        update.effective_user
-    )
+    user = update.effective_user
+
+    await save_user(user)
 
     await send_reply(
         update,
@@ -1263,11 +1331,13 @@ async def help_command(update, context):
         "/bcuser\n"
         "/bcgroup\n"
         "/bcall\n"
-        "/stats\n\n"
+        "/stats\n"
+        "/marget\n\n"
 
         "📢 CHANNEL\n"
         "━━━━━━━━━━━━━━\n"
-        "Join request → DM → Advertisement → Auto Approve",
+        "Join request → Verification → DM → "
+        "Advertisement → Auto Approve",
     )
 
 
@@ -1605,6 +1675,7 @@ async def broadcast_to_chat(
             return True
 
         except Exception:
+
             return False
 
     except Exception as e:
@@ -1628,7 +1699,12 @@ async def bcuser_command(update, context):
         return
 
     source = update.message.reply_to_message
-    text = " ".join(context.args) if context.args else None
+
+    text = (
+        " ".join(context.args)
+        if context.args
+        else None
+    )
 
     if not source and not text:
 
@@ -1636,7 +1712,8 @@ async def bcuser_command(update, context):
             update,
             "📣 USER BROADCAST\n\n"
             "/bcuser Your message\n\n"
-            "Ya kisi message/photo/video par reply karke /bcuser",
+            "Ya kisi message/photo/video par "
+            "reply karke /bcuser",
         )
 
         return
@@ -1661,9 +1738,21 @@ async def bcuser_command(update, context):
         )
 
         if success:
+
             sent += 1
+
         else:
+
             failed += 1
+
+            # Invalid/private unavailable chat
+            # ko database se remove karne ki koshish
+            try:
+                await db.delete_user(
+                    chat_id
+                )
+            except Exception:
+                pass
 
         await asyncio.sleep(0.05)
 
@@ -1685,7 +1774,12 @@ async def bcgroup_command(update, context):
         return
 
     source = update.message.reply_to_message
-    text = " ".join(context.args) if context.args else None
+
+    text = (
+        " ".join(context.args)
+        if context.args
+        else None
+    )
 
     if not source and not text:
 
@@ -1693,7 +1787,8 @@ async def bcgroup_command(update, context):
             update,
             "📣 GROUP BROADCAST\n\n"
             "/bcgroup Your message\n\n"
-            "Ya kisi message/photo/video par reply karke /bcgroup",
+            "Ya kisi message/photo/video par "
+            "reply karke /bcgroup",
         )
 
         return
@@ -1718,8 +1813,11 @@ async def bcgroup_command(update, context):
         )
 
         if success:
+
             sent += 1
+
         else:
+
             failed += 1
 
         await asyncio.sleep(0.05)
@@ -1742,7 +1840,12 @@ async def bcall_command(update, context):
         return
 
     source = update.message.reply_to_message
-    text = " ".join(context.args) if context.args else None
+
+    text = (
+        " ".join(context.args)
+        if context.args
+        else None
+    )
 
     if not source and not text:
 
@@ -1750,7 +1853,8 @@ async def bcall_command(update, context):
             update,
             "📣 GLOBAL BROADCAST\n\n"
             "/bcall Your message\n\n"
-            "Ya kisi message/photo/video par reply karke /bcall",
+            "Ya kisi message/photo/video par "
+            "reply karke /bcall",
         )
 
         return
@@ -1767,7 +1871,10 @@ async def bcall_command(update, context):
     group_sent = 0
     failed = 0
 
+    # ========================================================
     # USERS
+    # ========================================================
+
     for chat_id in users:
 
         success = await broadcast_to_chat(
@@ -1778,13 +1885,26 @@ async def bcall_command(update, context):
         )
 
         if success:
+
             user_sent += 1
+
         else:
+
             failed += 1
+
+            try:
+                await db.delete_user(
+                    chat_id
+                )
+            except Exception:
+                pass
 
         await asyncio.sleep(0.05)
 
+    # ========================================================
     # GROUPS
+    # ========================================================
+
     for chat_id in groups:
 
         success = await broadcast_to_chat(
@@ -1795,8 +1915,11 @@ async def bcall_command(update, context):
         )
 
         if success:
+
             group_sent += 1
+
         else:
+
             failed += 1
 
         await asyncio.sleep(0.05)
@@ -1837,13 +1960,72 @@ async def stats_command(update, context):
         return
 
     users = await db.total_users()
+    verified = await db.total_verified_users()
     groups = await db.total_groups()
 
     await send_reply(
         update,
         "📊 BOT STATISTICS\n\n"
         f"👤 Total Users: {users}\n"
-        f"👥 Total Groups: {groups}",
+        f"🤖 Verified Users: {verified}\n"
+        f"👥 Groups/Channels: {groups}",
+    )
+
+
+# ============================================================
+# /MARGET
+# ============================================================
+
+async def marget_command(update, context):
+
+    if not await require_owner(update):
+        return
+
+    await send_reply(
+        update,
+        "🔄 DATABASE MERGE STARTED...\n\n"
+        "Old MongoDB ka data current database me merge ho raha hai.\n"
+        "Please wait...",
+    )
+
+    try:
+
+        result = await db.merge_old_data()
+
+    except Exception as e:
+
+        LOGGER.exception(
+            "MARGET ERROR"
+        )
+
+        await send_reply(
+            update,
+            "❌ DATABASE MERGE FAILED\n\n"
+            f"Error: {str(e)[:1000]}",
+        )
+
+        return
+
+    if not result.get("success"):
+
+        await send_reply(
+            update,
+            "❌ DATABASE MERGE FAILED\n\n"
+            "OLD_MONGO_URL configure nahi hai.\n\n"
+            "Heroku Config Vars me:\n"
+            "OLD_MONGO_URL = old MongoDB URL",
+        )
+
+        return
+
+    await send_reply(
+        update,
+        "📥 DATABASE MERGE COMPLETE\n\n"
+        f"👤 Users: {result.get('users', 0)}\n"
+        f"👥 Groups: {result.get('groups', 0)}\n"
+        f"⏳ Pending: {result.get('pending', 0)}\n"
+        f"📢 Ads: {result.get('ads', 0)}\n\n"
+        "✅ Old data successfully merged.",
     )
 
 
@@ -1895,6 +2077,7 @@ async def post_init(application):
         BotCommand("bcall", "Broadcast everyone"),
 
         BotCommand("stats", "Bot statistics"),
+        BotCommand("marget", "Merge old database"),
     ]
 
     await application.bot.set_my_commands(
@@ -2024,6 +2207,17 @@ def main():
     )
 
     # ========================================================
+    # VERIFICATION CALLBACK
+    # ========================================================
+
+    application.add_handler(
+        CallbackQueryHandler(
+            verification_callback,
+            pattern=r"^verify_user$",
+        )
+    )
+
+    # ========================================================
     # BASIC
     # ========================================================
 
@@ -2116,6 +2310,13 @@ def main():
         CommandHandler(
             "stats",
             stats_command,
+        )
+    )
+
+    application.add_handler(
+        CommandHandler(
+            "marget",
+            marget_command,
         )
     )
 
