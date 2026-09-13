@@ -1,11 +1,10 @@
 from motor.motor_asyncio import AsyncIOMotorClient
 from config import MONGO_URL
-import os
 from datetime import datetime
 
 
 # ============================================================
-# CURRENT MONGODB CONNECTION
+# MONGODB CONNECTION
 # ============================================================
 
 mongo_client = AsyncIOMotorClient(
@@ -14,24 +13,6 @@ mongo_client = AsyncIOMotorClient(
 )
 
 db = mongo_client["auto_join_request_bot"]
-
-
-# ============================================================
-# OLD MONGODB CONNECTION
-# ============================================================
-
-OLD_MONGO_URL = os.getenv("OLD_MONGO_URL", "").strip()
-
-old_mongo_client = None
-old_db = None
-
-if OLD_MONGO_URL:
-    old_mongo_client = AsyncIOMotorClient(
-        OLD_MONGO_URL,
-        serverSelectionTimeoutMS=10000
-    )
-
-    old_db = old_mongo_client["auto_join_request_bot"]
 
 
 # ============================================================
@@ -51,7 +32,7 @@ ads = db["ads"]
 class Database:
 
     # ========================================================
-    # USER
+    # USERS
     # ========================================================
 
     async def save_user(
@@ -75,9 +56,12 @@ class Database:
             data["user_chat_id"] = user_chat_id
 
         await users.update_one(
-            {"_id": user_id},
+            {
+                "_id": user_id
+            },
             {
                 "$set": data,
+
                 "$setOnInsert": {
                     "verified": False,
                     "created_at": datetime.utcnow()
@@ -200,7 +184,7 @@ class Database:
         )
 
     # ========================================================
-    # GROUP
+    # GROUP / CHANNEL
     # ========================================================
 
     async def save_group(
@@ -228,8 +212,6 @@ class Database:
             {
                 "$set": data,
 
-                # New group/channel:
-                # Auto approval OFF
                 "$setOnInsert": {
                     "approve_enabled": False,
                     "created_at": datetime.utcnow()
@@ -251,7 +233,7 @@ class Database:
         )
 
     # ========================================================
-    # GET ALL GROUPS
+    # GET ALL GROUPS / CHANNELS
     # ========================================================
 
     async def get_all_groups(self):
@@ -271,22 +253,7 @@ class Database:
         return result
 
     # ========================================================
-    # GET ALL GROUP DOCUMENTS
-    # ========================================================
-
-    async def get_all_group_docs(self):
-
-        cursor = groups.find({})
-
-        result = []
-
-        async for doc in cursor:
-            result.append(doc)
-
-        return result
-
-    # ========================================================
-    # TOTAL GROUPS
+    # TOTAL GROUPS / CHANNELS
     # ========================================================
 
     async def total_groups(self):
@@ -294,7 +261,19 @@ class Database:
         return await groups.count_documents({})
 
     # ========================================================
-    # SET APPROVAL
+    # DELETE GROUP
+    # ========================================================
+
+    async def delete_group(self, chat_id):
+
+        await groups.delete_one(
+            {
+                "_id": chat_id
+            }
+        )
+
+    # ========================================================
+    # AUTO APPROVAL
     # ========================================================
 
     async def set_approval(
@@ -317,7 +296,7 @@ class Database:
         )
 
     # ========================================================
-    # CHECK APPROVAL
+    # CHECK AUTO APPROVAL
     # ========================================================
 
     async def approval_enabled(
@@ -337,18 +316,6 @@ class Database:
         return group.get(
             "approve_enabled",
             False
-        )
-
-    # ========================================================
-    # DELETE GROUP
-    # ========================================================
-
-    async def delete_group(self, chat_id):
-
-        await groups.delete_one(
-            {
-                "_id": chat_id
-            }
         )
 
     # ========================================================
@@ -372,6 +339,10 @@ class Database:
                     "chat_id": chat_id,
                     "user_id": user_id,
                     "user_chat_id": user_chat_id,
+                    "updated_at": datetime.utcnow()
+                },
+
+                "$setOnInsert": {
                     "created_at": datetime.utcnow()
                 }
             },
@@ -405,7 +376,7 @@ class Database:
         return result
 
     # ========================================================
-    # REMOVE ONE PENDING
+    # REMOVE PENDING
     # ========================================================
 
     async def remove_pending(
@@ -463,6 +434,7 @@ class Database:
             },
             {
                 "$set": data,
+
                 "$setOnInsert": {
                     "created_at": datetime.utcnow()
                 }
@@ -495,216 +467,21 @@ class Database:
         )
 
     # ========================================================
-    # HAS AD
+    # CHECK AD
     # ========================================================
 
     async def has_ad(self):
 
-        return (
-            await ads.find_one(
-                {
-                    "_id": "main"
-                }
-            )
-            is not None
-        )
-
-    # ========================================================
-    # MARGET / MERGE OLD DATABASE
-    # ========================================================
-
-    async def merge_old_data(self):
-
-        if old_db is None:
-
-            return {
-                "success": False,
-                "message": "OLD_MONGO_URL not configured",
-                "users": 0,
-                "groups": 0,
-                "pending": 0,
-                "ads": 0
-            }
-
-        merged_users = 0
-        merged_groups = 0
-        merged_pending = 0
-        merged_ads = 0
-
-        # ====================================================
-        # USERS
-        # ====================================================
-
-        old_users = old_db["users"]
-
-        async for doc in old_users.find({}):
-
-            user_id = doc.get(
-                "_id"
-            )
-
-            if user_id is None:
-                continue
-
-            new_data = {
-                "_id": user_id
-            }
-
-            for key in [
-                "user_id",
-                "username",
-                "first_name",
-                "last_name",
-                "user_chat_id",
-                "verified",
-                "verified_at",
-                "created_at",
-                "updated_at"
-            ]:
-
-                if key in doc:
-                    new_data[key] = doc[key]
-
-            await users.update_one(
-                {
-                    "_id": user_id
-                },
-                {
-                    "$setOnInsert": new_data
-                },
-                upsert=True
-            )
-
-            merged_users += 1
-
-        # ====================================================
-        # GROUPS
-        # ====================================================
-
-        old_groups = old_db["groups"]
-
-        async for doc in old_groups.find({}):
-
-            chat_id = doc.get(
-                "_id"
-            )
-
-            if chat_id is None:
-                continue
-
-            new_data = {
-                "_id": chat_id
-            }
-
-            for key in [
-                "chat_id",
-                "title",
-                "username",
-                "chat_type",
-                "approve_enabled",
-                "created_at",
-                "updated_at"
-            ]:
-
-                if key in doc:
-                    new_data[key] = doc[key]
-
-            await groups.update_one(
-                {
-                    "_id": chat_id
-                },
-                {
-                    "$setOnInsert": new_data
-                },
-                upsert=True
-            )
-
-            merged_groups += 1
-
-        # ====================================================
-        # PENDING REQUESTS
-        # ====================================================
-
-        old_pending = old_db[
-            "pending_requests"
-        ]
-
-        async for doc in old_pending.find({}):
-
-            chat_id = doc.get(
-                "chat_id"
-            )
-
-            user_id = doc.get(
-                "user_id"
-            )
-
-            if chat_id is None or user_id is None:
-                continue
-
-            await pending_requests.update_one(
-                {
-                    "chat_id": chat_id,
-                    "user_id": user_id
-                },
-                {
-                    "$setOnInsert": {
-                        "chat_id": chat_id,
-                        "user_id": user_id,
-                        "user_chat_id": doc.get(
-                            "user_chat_id"
-                        ),
-                        "created_at": doc.get(
-                            "created_at",
-                            datetime.utcnow()
-                        )
-                    }
-                },
-                upsert=True
-            )
-
-            merged_pending += 1
-
-        # ====================================================
-        # AD
-        # ====================================================
-
-        old_ads = old_db["ads"]
-
-        old_ad = await old_ads.find_one(
+        ad = await ads.find_one(
             {
                 "_id": "main"
             }
         )
 
-        current_ad = await ads.find_one(
-            {
-                "_id": "main"
-            }
-        )
-
-        # Current ad ko overwrite nahi karega.
-        # Sirf tab old ad dalega jab current DB me ad nahi hai.
-
-        if old_ad and not current_ad:
-
-            await ads.insert_one(
-                old_ad
-            )
-
-            merged_ads = 1
-
-        return {
-            "success": True,
-            "message": "Old database merged successfully",
-            "users": merged_users,
-            "groups": merged_groups,
-            "pending": merged_pending,
-            "ads": merged_ads
-        }
+        return ad is not None
 
     # ========================================================
-    # MONGODB TEST
+    # MONGODB PING
     # ========================================================
 
     async def ping(self):
