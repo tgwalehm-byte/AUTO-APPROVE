@@ -4,7 +4,7 @@ from datetime import datetime
 
 
 # ============================================================
-# MONGODB CONNECTION
+# MONGODB
 # ============================================================
 
 mongo_client = AsyncIOMotorClient(
@@ -26,13 +26,13 @@ ads = db["ads"]
 
 
 # ============================================================
-# DATABASE CLASS
+# DATABASE
 # ============================================================
 
 class Database:
 
     # ========================================================
-    # USERS
+    # SAVE USER
     # ========================================================
 
     async def save_user(
@@ -41,7 +41,8 @@ class Database:
         username=None,
         first_name=None,
         last_name=None,
-        user_chat_id=None
+        user_chat_id=None,
+        eligible=False
     ):
 
         data = {
@@ -55,6 +56,11 @@ class Database:
         if user_chat_id:
             data["user_chat_id"] = user_chat_id
 
+        # User ne /start ya verification kiya
+        if eligible:
+            data["eligible"] = True
+            data["eligible_at"] = datetime.utcnow()
+
         await users.update_one(
             {
                 "_id": user_id
@@ -63,6 +69,7 @@ class Database:
                 "$set": data,
 
                 "$setOnInsert": {
+                    "eligible": False,
                     "verified": False,
                     "created_at": datetime.utcnow()
                 }
@@ -71,46 +78,23 @@ class Database:
         )
 
     # ========================================================
-    # GET ALL USERS
+    # MARK USER ELIGIBLE
     # ========================================================
 
-    async def get_all_users(self):
+    async def mark_user_eligible(self, user_id):
 
-        cursor = users.find(
-            {},
+        await users.update_one(
             {
-                "_id": 1
-            }
-        )
-
-        result = []
-
-        async for doc in cursor:
-            result.append(doc["_id"])
-
-        return result
-
-    # ========================================================
-    # GET VERIFIED USERS
-    # ========================================================
-
-    async def get_verified_users(self):
-
-        cursor = users.find(
-            {
-                "verified": True
+                "_id": user_id
             },
             {
-                "_id": 1
-            }
+                "$set": {
+                    "eligible": True,
+                    "eligible_at": datetime.utcnow()
+                }
+            },
+            upsert=True
         )
-
-        result = []
-
-        async for doc in cursor:
-            result.append(doc["_id"])
-
-        return result
 
     # ========================================================
     # VERIFY USER
@@ -125,7 +109,9 @@ class Database:
             {
                 "$set": {
                     "verified": True,
-                    "verified_at": datetime.utcnow()
+                    "eligible": True,
+                    "verified_at": datetime.utcnow(),
+                    "eligible_at": datetime.utcnow()
                 }
             },
             upsert=True
@@ -152,15 +138,44 @@ class Database:
         )
 
     # ========================================================
-    # TOTAL USERS
+    # GET BROADCAST USERS
     # ========================================================
 
-    async def total_users(self):
+    async def get_broadcast_users(self):
 
-        return await users.count_documents({})
+        cursor = users.find(
+            {
+                "eligible": True
+            },
+            {
+                "_id": 1
+            }
+        )
+
+        result = []
+
+        async for doc in cursor:
+
+            result.append(
+                doc["_id"]
+            )
+
+        return result
 
     # ========================================================
-    # TOTAL VERIFIED USERS
+    # TOTAL BROADCAST USERS
+    # ========================================================
+
+    async def total_broadcast_users(self):
+
+        return await users.count_documents(
+            {
+                "eligible": True
+            }
+        )
+
+    # ========================================================
+    # TOTAL VERIFIED
     # ========================================================
 
     async def total_verified_users(self):
@@ -184,7 +199,17 @@ class Database:
         )
 
     # ========================================================
-    # GROUP / CHANNEL
+    # DELETE ALL USERS
+    # ========================================================
+
+    async def delete_all_users(self):
+
+        result = await users.delete_many({})
+
+        return result.deleted_count
+
+    # ========================================================
+    # GROUP
     # ========================================================
 
     async def save_group(
@@ -233,7 +258,7 @@ class Database:
         )
 
     # ========================================================
-    # GET ALL GROUPS / CHANNELS
+    # GET ALL GROUPS
     # ========================================================
 
     async def get_all_groups(self):
@@ -248,12 +273,14 @@ class Database:
         result = []
 
         async for doc in cursor:
-            result.append(doc["_id"])
+            result.append(
+                doc["_id"]
+            )
 
         return result
 
     # ========================================================
-    # TOTAL GROUPS / CHANNELS
+    # TOTAL GROUPS
     # ========================================================
 
     async def total_groups(self):
@@ -319,7 +346,7 @@ class Database:
         )
 
     # ========================================================
-    # PENDING REQUEST
+    # PENDING
     # ========================================================
 
     async def save_pending(
@@ -467,21 +494,22 @@ class Database:
         )
 
     # ========================================================
-    # CHECK AD
+    # HAS AD
     # ========================================================
 
     async def has_ad(self):
 
-        ad = await ads.find_one(
-            {
-                "_id": "main"
-            }
+        return (
+            await ads.find_one(
+                {
+                    "_id": "main"
+                }
+            )
+            is not None
         )
 
-        return ad is not None
-
     # ========================================================
-    # MONGODB PING
+    # PING
     # ========================================================
 
     async def ping(self):
